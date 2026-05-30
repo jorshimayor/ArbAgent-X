@@ -29,7 +29,7 @@ returning garbage. The naive market selects *for* fraud.
 ProofStake adds the missing half: **financial accountability**.
 
 1. **Bond to play.** To list in the registry, an agent deposits a USDC bond.
-   The bond sits in a Morpho ERC-4626 vault and earns yield while the agent is
+   The bond sits in a Moonwell ERC-4626 vault and earns yield while the agent is
    idle, so honest agents are *paid to wait*.
 2. **Get paid per job via x402.** Clients pay the agent's price through the
    standard x402 flow. Nothing new for the client to learn.
@@ -77,7 +77,7 @@ Three protocols, each doing exactly one job:
 |--------------|----------------------------------------------------------------|
 | **Base MCP** | The discovery + routing surface agents/hosts call to pick whom to pay |
 | **x402**     | The payment rail — pay-per-task with a 402 handshake           |
-| **Morpho**   | The bond vault — bonds earn yield idle, slashing redeems them  |
+| **Moonwell** | The bond vault — bonds earn yield idle, slashing redeems them  |
 
 ---
 
@@ -131,6 +131,48 @@ score descending.
 
 ---
 
+## 3b. The Base MCP skill plugin (no-custody actions)
+
+The router above is for *discovery*. To take **action** the way the Base MCP
+article requires — agent proposes, the user approves in their Base Account, and
+the MCP layer never holds a key — ProofStake ships a real **skill plugin**:
+`plugins/proofstake.md` backed by the **prepare service** (`offchain/prepare/server.ts`).
+
+The plugin follows the four mandatory sections from the Base MCP custom-plugin
+spec:
+
+1. **Onboarding gate** — a `STOP` that forces Base MCP onboarding (`get_wallets`)
+   and a risk disclaimer before any action.
+2. **Read endpoints** — `GET /info`, `GET /agents`, `GET /reputation/:id` for
+   state, with units documented.
+3. **Prepare endpoints** — `POST /prepare/{register,topup,challenge,deactivate,withdraw}`
+   return **unsigned calldata** as a batch of `{ to, value, data, chainId }`
+   objects (token approvals included as the first call). The service uses
+   `ethers.Interface.encodeFunctionData` and **never touches a private key**.
+4. **`send_calls` mapping** — the assistant maps the returned `calls` into Base
+   MCP `send_calls` on the right `chainName`, gets an approval link, and the user
+   signs the atomic batch in their **Base Account**. Status is polled via
+   `get_request_status`.
+
+This is the crucial difference from a raw-key script: a user-facing action like
+opening a challenge is now `prepare → send_calls → Base Account approval`, so
+*nothing moves without the user*. The autonomous **verifier** role (`resolve`) is
+a protocol keeper and is intentionally *not* exposed as a user prepare endpoint.
+
+Example — `POST /prepare/register {"endpoint":"…","bondUsdc":2}` returns:
+
+```json
+{
+  "calls": [
+    { "to": "<USDC>",      "value": "0x0", "data": "0x095ea7b3…", "chainId": 84532 },
+    { "to": "<ProofStake>", "value": "0x0", "data": "0xea87152b…", "chainId": 84532 }
+  ],
+  "chainName": "base-sepolia"
+}
+```
+
+---
+
 ## 4. How x402 is implemented
 
 x402 is the payment rail on both sides of the call.
@@ -177,10 +219,10 @@ challenger submits on-chain.
 
 ---
 
-## 5. How Morpho is implemented
+## 5. How Moonwell is implemented
 
 The bond is not a dead deposit sitting in the contract — it lives in a
-**Morpho ERC-4626 (MetaMorpho) vault** and earns yield the whole time it
+**Moonwell ERC-4626 vault** and earns yield the whole time it
 secures the agent.
 
 ### Bonds as vault shares
@@ -212,10 +254,13 @@ secures the agent.
   challenger, so there is no settlement gap.
 
 The constructor enforces `vault.asset() == usdc`, so the bond asset and the
-vault's underlying can never diverge. On Base Sepolia the demo uses a mock
-ERC-4626 vault over real Circle USDC; on mainnet this slot takes a production
-MetaMorpho USDC vault address unchanged — the contract only ever talks to the
-ERC-4626 interface.
+vault's underlying can never diverge. Moonwell exposes real ERC-4626 vaults on
+Base **mainnet** (ERC20 4626 factory `0xe770BD40b6976Efbbb095174395DD2cb794c938a`,
+per-asset vaults like mUSDC `0xedc817a2…`); Base Sepolia only has partial Moonwell
+test deployments, so the testnet demo uses a Moonwell-interface-compatible mock
+(`MockMoonwellVault`) over real Circle USDC. Moving to mainnet is a one-line
+address change (`MOONWELL_VAULT=…`) — the contract only ever talks to the
+ERC-4626 interface, so no code changes.
 
 ### Key contract surface (`contracts/ProofStake.sol`)
 

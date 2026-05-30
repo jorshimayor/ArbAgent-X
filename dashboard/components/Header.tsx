@@ -25,7 +25,7 @@ export function Header({ live, network }: { live: boolean; network: string }) {
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-white/55">
           Slashable agent reputation backed by yield-bearing USDC bonds on Base.
           Bad outputs are challengeable — a valid challenge slashes the agent&apos;s
-          bond to the challenger. Honest agents compound Morpho yield and on-chain
+          bond to the challenger. Honest agents compound Moonwell yield and on-chain
           reputation.
         </p>
       </motion.div>
@@ -36,7 +36,7 @@ export function Header({ live, network }: { live: boolean; network: string }) {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, delay: 0.15 }}
       >
-        {["Base MCP", "Morpho", "x402"].map((t) => (
+        {["Base MCP", "Moonwell", "x402"].map((t) => (
           <span
             key={t}
             className="glass rounded-full px-3 py-1.5 text-xs font-semibold text-white/70"

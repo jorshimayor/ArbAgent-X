@@ -9,20 +9,20 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 /// @title ProofStake
 /// @notice x402 with skin in the game. A registry of x402-paid agents, each
-///         backed by a yield-bearing USDC bond held as shares of a MetaMorpho
+///         backed by a yield-bearing USDC bond held as shares of a Moonwell
 ///         (ERC4626) vault. Bad outputs are challengeable; an upheld challenge
 ///         slashes the agent's bond to the challenger.
 /// @dev v1 collapses AgentRegistry + BondVault + Slasher into one contract and
 ///      uses a single trusted verifier — called out openly in the PRD. The bond
-///      is deposited straight into a Morpho vault, so principal earns yield
-///      while idle and slashing redeems shares atomically for liquid USDC.
+///      is deposited straight into a Moonwell ERC4626 vault, so principal earns
+///      yield while idle and slashing redeems shares atomically for liquid USDC.
 contract ProofStake is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // --- Config ---
 
     IERC20 public immutable usdc;
-    IERC4626 public immutable vault; // MetaMorpho USDC vault
+    IERC4626 public immutable vault; // Moonwell ERC4626 USDC vault
     address public verifier; // trusted resolver (v1)
     address public treasury; // collects protocol fee on slashes
     uint16 public protocolFeeBps; // fee on slashed amount, in basis points
@@ -37,7 +37,7 @@ contract ProofStake is Ownable, ReentrancyGuard {
     struct Agent {
         address operator;
         string endpoint;
-        uint256 shares; // Morpho vault shares backing this agent's bond
+        uint256 shares; // Moonwell vault shares backing this agent's bond
         uint64 jobsServed;
         uint64 jobsSuccessful;
         uint64 timesSlashed;
@@ -136,7 +136,7 @@ contract ProofStake is Ownable, ReentrancyGuard {
 
     // --- Registry + BondVault ---
 
-    /// @notice Register an agent and bond `bondAmount` USDC into the Morpho vault.
+    /// @notice Register an agent and bond `bondAmount` USDC into the Moonwell vault.
     /// @dev Caller must have approved this contract for `bondAmount` USDC.
     function register(string calldata endpoint, uint256 bondAmount) external nonReentrant returns (uint256 agentId) {
         if (bondAmount < minBond) revert BondTooSmall();

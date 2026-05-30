@@ -8,7 +8,7 @@ import { ActivityFeed } from "@/components/ActivityFeed";
 import { RouterPanel } from "@/components/RouterPanel";
 
 const SECONDS_PER_YEAR = 31_536_000;
-// Visualization speed-up so Morpho yield is visibly accruing during a 3-min demo.
+// Visualization speed-up so Moonwell yield is visibly accruing during a 3-min demo.
 // Underlying bond values are real; only the live-accrual animation is scaled.
 const ACCRUAL_SPEED = 1200;
 
@@ -93,7 +93,7 @@ export default function Page() {
       </div>
 
       <footer className="mt-12 border-t border-white/5 pt-6 text-center text-xs text-white/30">
-        ProofStake · Built with Base MCP + Morpho + x402 · v1 uses a single trusted verifier (called out openly)
+        ProofStake · Built with Base MCP + Moonwell + x402 · v1 uses a single trusted verifier (called out openly)
       </footer>
     </main>
   );

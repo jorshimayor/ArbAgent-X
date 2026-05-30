@@ -12,6 +12,7 @@
     "verifier": "tsx verifier/index.ts",
     "router": "tsx router/mcp.ts",
     "evidence": "cross-env EVIDENCE_PORT=4100 tsx evidence/store.ts",
+    "prepare": "cross-env PREPARE_PORT=4200 tsx prepare/server.ts",
     "smoke": "tsx scripts/smoke.ts",
     "client": "tsx scripts/client.ts",
     "challenge": "tsx scripts/challenge.ts",

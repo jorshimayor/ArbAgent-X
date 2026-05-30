@@ -43,7 +43,7 @@ async function fetchInfo(endpoint: string): Promise<AgentInfo> {
  *
  * Live mode enriches each agent with its off-chain /info (name, profile, price),
  * derives the original bond principal from AgentRegistered events (so accrued
- * Morpho yield = bondValue − principal), and builds the activity feed from
+ * Moonwell yield = bondValue − principal), and builds the activity feed from
  * on-chain events instead of the demo placeholder.
  */
 export async function getState(): Promise<DashboardState> {
@@ -161,7 +161,7 @@ async function buildActivity(
       kind: "register",
       agentId,
       agentName: name(agentId),
-      text: `Bonded ${fromUsdc(ev.args.bond).toFixed(2)} USDC into MetaMorpho vault`,
+      text: `Bonded ${fromUsdc(ev.args.bond).toFixed(2)} USDC into Moonwell vault`,
       amountUsd: fromUsdc(ev.args.bond),
       txHash: short(ev.transactionHash),
       at: await timeOf(ev.blockNumber),

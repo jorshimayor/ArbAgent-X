@@ -1,6 +1,6 @@
 import type { Activity, Agent, DashboardState } from "./types";
 
-const VAULT_APY = 0.061; // Steakhouse-style curated MetaMorpho USDC vault, ~6.1%
+const VAULT_APY = 0.061; // Moonwell ERC4626 USDC vault, ~6.1%
 
 const agents: Agent[] = [
   {
@@ -67,8 +67,8 @@ const activity: Activity[] = [
   { id: "a2", kind: "challenge", agentId: 3, agentName: "Malicious Agent", text: "Client challenged output of req 0x3b…91 (returned 42)", amountUsd: 0.5, txHash: "0x2c9b…77ea", at: now - 1000 * 95 },
   { id: "a3", kind: "job", agentId: 1, agentName: "Good Agent", text: "Served math task — paid $0.002 via x402", amountUsd: 0.002, at: now - 1000 * 130 },
   { id: "a4", kind: "job", agentId: 2, agentName: "Mediocre Agent", text: "Served math task — paid $0.001 via x402", amountUsd: 0.001, at: now - 1000 * 180 },
-  { id: "a5", kind: "yield", agentId: 1, agentName: "Good Agent", text: "Morpho yield accrued on idle bond", amountUsd: 4.18, at: now - 1000 * 240 },
-  { id: "a6", kind: "register", agentId: 1, agentName: "Good Agent", text: "Bonded 1,000 USDC into MetaMorpho vault", amountUsd: 1000, txHash: "0x55ab…0a91", at: now - 1000 * 600 },
+  { id: "a5", kind: "yield", agentId: 1, agentName: "Good Agent", text: "Moonwell yield accrued on idle bond", amountUsd: 4.18, at: now - 1000 * 240 },
+  { id: "a6", kind: "register", agentId: 1, agentName: "Good Agent", text: "Bonded 1,000 USDC into Moonwell vault", amountUsd: 1000, txHash: "0x55ab…0a91", at: now - 1000 * 600 },
 ];
 
 export function demoState(): DashboardState {

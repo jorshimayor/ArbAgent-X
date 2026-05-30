@@ -50,7 +50,7 @@ export function StatGrid({ agents, accruedYield, vaultApy }: { agents: Agent[]; 
       <Stat label="Total Value Bonded" accent="#3D7BFF" delay={0.05} sub={`across ${activeCount} active agents`}>
         <CountUp value={totalBonded} format={(n) => usd(n)} />
       </Stat>
-      <Stat label="Morpho Yield Accrued" accent="#34F5C5" delay={0.12} sub={`${pct(vaultApy)} APY · live`}>
+      <Stat label="Moonwell Yield Accrued" accent="#34F5C5" delay={0.12} sub={`${pct(vaultApy)} APY · live`}>
         <CountUp value={accruedYield} format={(n) => usdMicro(n)} duration={0.4} />
       </Stat>
       <Stat label="Jobs Served (x402)" accent="#A78BFA" delay={0.19} sub="paid per call">

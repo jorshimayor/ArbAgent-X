@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "ProofStake — x402 with skin in the game",
   description:
-    "Slashable agent reputation backed by yield-bearing USDC bonds on Base. Built with Base MCP + Morpho + x402.",
+    "Slashable agent reputation backed by yield-bearing USDC bonds on Base. Built with Base MCP + Moonwell + x402.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -14,7 +14,7 @@ async function deployFixture() {
   const MockUSDC = await ethers.getContractFactory("MockUSDC");
   const usdc = await MockUSDC.deploy();
 
-  const MockVault = await ethers.getContractFactory("MockMetaMorpho");
+  const MockVault = await ethers.getContractFactory("MockMoonwellVault");
   const vault = await MockVault.deploy(await usdc.getAddress());
 
   const ProofStake = await ethers.getContractFactory("ProofStake");
@@ -114,7 +114,7 @@ describe("ProofStake", () => {
   });
 
   describe("yield", () => {
-    it("accrues Morpho yield to the agent's bond value", async () => {
+    it("accrues Moonwell yield to the agent's bond value", async () => {
       const ctx = await loadFixture(deployFixture);
       const bond = USDC(1_000);
       const id = await registerAgent(ctx, ctx.operatorA, "a", bond);

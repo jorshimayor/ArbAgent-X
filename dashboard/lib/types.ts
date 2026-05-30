@@ -8,7 +8,7 @@ export interface Agent {
   endpoint: string;
   bondUsd: number; // current redeemable value (principal + accrued yield)
   principalUsd: number; // original bond
-  apy: number; // Morpho vault APY, e.g. 0.061
+  apy: number; // Moonwell vault APY, e.g. 0.061
   jobsServed: number;
   jobsSuccessful: number;
   timesSlashed: number;
