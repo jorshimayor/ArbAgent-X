@@ -1,7 +1,6 @@
 import * as dotenv from "dotenv";
 import { ethers } from "ethers";
 import { getSkinBookWrite, getSkinBookRead, getProvider, env } from "../shared/chain.js";
-import { SKINBOOK_ABI } from "../shared/abi.js";
 
 dotenv.config();
 
@@ -41,37 +40,106 @@ export async function resolve(bookingId: number, present: boolean): Promise<void
   );
 }
 
-/** Watch for no-show claims and disputes; auto-settle once windows elapse. */
+// Public RPCs (e.g. sepolia.base.org) expire stateful event filters between
+// polls (eth_getFilterChanges -> "filter not found") AND cap eth_getLogs to a
+// few thousand blocks. So the watcher does NOT use contract.on(); it polls
+// queryFilter over a bounded, chunked block window each tick — the same pattern
+// the dashboard reader uses. This is robust on public RPCs and on mainnet.
+const POLL_MS = Number(process.env.KEEPER_POLL_MS ?? 12_000);
+const LOOKBACK = Number(process.env.KEEPER_LOOKBACK ?? 9_000);
+const LOG_CHUNK = Number(process.env.KEEPER_LOG_CHUNK ?? 2_000);
+
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const errMsg = (e: any) => e?.shortMessage ?? e?.message ?? String(e);
+
+/** Page queryFilter through [from,to] in chunks; a rejected chunk is skipped. */
+async function scanLogs(
+  contract: ethers.Contract,
+  filter: ethers.DeferredTopicFilter,
+  from: number,
+  to: number
+): Promise<ethers.EventLog[]> {
+  const out: ethers.EventLog[] = [];
+  for (let lo = from; lo <= to; lo += LOG_CHUNK) {
+    const hi = Math.min(lo + LOG_CHUNK - 1, to);
+    try {
+      out.push(...((await contract.queryFilter(filter, lo, hi)) as ethers.EventLog[]));
+    } catch {
+      /* skip a chunk the RPC rejects rather than dropping the whole scan */
+    }
+  }
+  return out;
+}
+
+/**
+ * Watch for no-show claims and disputes; auto-settle uncontested no-shows once
+ * their dispute window elapses. Idempotent: every tick re-scans the recent
+ * window and re-reads on-chain status, so it self-heals across restarts and
+ * never double-acts (a `settled`/`seen` set just trims duplicate logging).
+ */
 export async function watch(): Promise<void> {
   if (!env.skinBookAddr) throw new Error("SKINBOOK_ADDR not set");
   const read = getSkinBookRead()!;
+  const provider = getProvider();
   const disputeWindow = Number(await read.disputeWindow());
-  const sb = new ethers.Contract(env.skinBookAddr, SKINBOOK_ABI, getProvider());
-  console.log(`[keeper] watching ${env.skinBookAddr} (dispute window ${disputeWindow}s)...`);
+  const canSettle = Boolean(KEEPER_KEY);
+  console.log(
+    `[keeper] polling ${env.skinBookAddr} every ${POLL_MS / 1000}s over ~${LOOKBACK} blocks ` +
+      `(dispute window ${disputeWindow}s, settle ${canSettle ? "enabled" : "DISABLED — no key"})`
+  );
 
-  sb.on("NoShowClaimed", async (bookingId: bigint, _businessId: bigint, at: bigint) => {
-    const id = Number(bookingId);
-    const settleAt = Number(at) + disputeWindow + 2;
-    const waitMs = Math.max(0, settleAt * 1000 - Date.now());
-    console.log(`[keeper] no-show filed on #${id}; will settle in ~${Math.round(waitMs / 1000)}s if undisputed`);
-    setTimeout(async () => {
-      try {
+  const settled = new Set<number>();
+  const disputeSeen = new Set<number>();
+
+  for (;;) {
+    try {
+      const latest = await provider.getBlockNumber();
+      const from = Math.max(0, latest - LOOKBACK);
+      const now = Math.floor(Date.now() / 1000);
+
+      // 1) Settle uncontested no-shows whose dispute window has elapsed.
+      for (const log of await scanLogs(read, read.filters.NoShowClaimed(), from, latest)) {
+        const id = Number(log.args.bookingId);
+        if (settled.has(id)) continue;
         const bk = await read.bookings(id);
-        if (Number(bk.status) === 3 /* NoShowClaimed */) await settle(id);
-        else console.log(`[keeper] #${id} no longer settleable (status ${Number(bk.status)})`);
-      } catch (e) {
-        console.error(`[keeper] settle #${id} failed:`, e);
+        if (Number(bk.status) !== 3 /* NoShowClaimed */) {
+          settled.add(id); // already resolved/disputed elsewhere
+          continue;
+        }
+        const settleAt = Number(bk.claimedAt) + disputeWindow;
+        if (now < settleAt) {
+          console.log(`[keeper] #${id} no-show pending — settle in ${settleAt - now}s if undisputed`);
+          continue;
+        }
+        if (!canSettle) {
+          console.log(`[keeper] #${id} ready to settle but no KEEPER_PRIVATE_KEY set`);
+          continue;
+        }
+        try {
+          await settle(id);
+          settled.add(id);
+        } catch (e) {
+          console.error(`[keeper] settle #${id} failed:`, errMsg(e));
+        }
       }
-    }, waitMs);
-  });
 
-  sb.on("Disputed", (bookingId: bigint) => {
-    console.log(
-      `[keeper] booking #${Number(bookingId)} DISPUTED — needs an arbiter. Run: tsx keeper/index.ts resolve ${Number(
-        bookingId
-      )} <true|false>`
-    );
-  });
+      // 2) Surface disputes — these need the human arbiter (no on-chain truth).
+      for (const log of await scanLogs(read, read.filters.Disputed(), from, latest)) {
+        const id = Number(log.args.bookingId);
+        if (disputeSeen.has(id)) continue;
+        disputeSeen.add(id);
+        const bk = await read.bookings(id);
+        if (Number(bk.status) === 4 /* Disputed */) {
+          console.log(
+            `[keeper] booking #${id} DISPUTED — needs an arbiter. Run: tsx keeper/index.ts resolve ${id} <true|false>`
+          );
+        }
+      }
+    } catch (e) {
+      console.error("[keeper] poll error:", errMsg(e));
+    }
+    await sleepMs(POLL_MS);
+  }
 }
 
 // CLI: watch | settle <id> | resolve <id> <true|false>
