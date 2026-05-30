@@ -122,6 +122,11 @@ export async function getState(): Promise<DashboardState> {
   }
 }
 
+// Public RPCs (e.g. sepolia.base.org) cap eth_getLogs to a few thousand blocks
+// per call, so we page through the window in chunks. This also keeps working as
+// the chain grows past a fixed start block. A failed chunk is skipped, not fatal.
+const LOG_CHUNK = Number(process.env.SKINBOOK_LOG_CHUNK ?? 2000);
+
 async function safeQuery(
   sb: ethers.Contract,
   filter: ethers.DeferredTopicFilter,
@@ -132,7 +137,18 @@ async function safeQuery(
     const startEnv = process.env.SKINBOOK_START_BLOCK;
     const lookback = Number(process.env.SKINBOOK_LOOKBACK ?? 9000);
     const from = startEnv ? Number(startEnv) : Math.max(0, latest - lookback);
-    return await sb.queryFilter(filter, from, latest);
+
+    const out: (ethers.EventLog | ethers.Log)[] = [];
+    for (let lo = from; lo <= latest; lo += LOG_CHUNK) {
+      const hi = Math.min(lo + LOG_CHUNK - 1, latest);
+      try {
+        const logs = await sb.queryFilter(filter, lo, hi);
+        out.push(...logs);
+      } catch {
+        // skip a chunk the RPC rejects rather than dropping the whole feed
+      }
+    }
+    return out;
   } catch {
     return [];
   }
