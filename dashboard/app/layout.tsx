@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ProofStake — x402 with skin in the game",
+  title: "SkinBook — no-show deposits with skin in the game",
   description:
-    "Slashable agent reputation backed by yield-bearing USDC bonds on Base. Built with Base MCP + Moonwell + x402.",
+    "Refundable booking deposits held as yield-bearing USDC on Base. Show up and get it back with interest; no-show and it's slashed to the business. Built with Base MCP + Moonwell.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

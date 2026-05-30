@@ -4,7 +4,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 const USDC = (n: number) => BigInt(Math.round(n * 1e6));
 
 /**
- * Deploys ProofStake against three supported vault/USDC combinations:
+ * Deploys SkinBook against three supported vault/USDC combinations:
  *
  *   1. MOONWELL_VAULT set            -> use that real ERC4626 vault + the real USDC
  *                                       at USDC (must be the vault's asset). On Base
@@ -17,19 +17,19 @@ const USDC = (n: number) => BigInt(Math.round(n * 1e6));
  *                                       Moonwell's real 4626 USDC vault is mainnet-only.)
  *   3. neither set                   -> deploy MockUSDC + MockMoonwellVault (local).
  *
- * MORPHO_VAULT is still honored as a fallback so older .env files keep working.
- * Bond minimums default to faucet-friendly amounts so the whole demo fits inside
- * the ~10 USDC/day Circle testnet faucet drip.
+ * Deposit floor + dispute window default to demo-friendly values. minDeposit is
+ * faucet-scale so the whole booking demo fits inside Circle's ~10 USDC/day drip.
  */
-export default buildModule("ProofStakeModule", (m) => {
+export default buildModule("SkinBookModule", (m) => {
   const externalUsdc = process.env.USDC ?? "";
-  const externalVault = process.env.MOONWELL_VAULT ?? process.env.MORPHO_VAULT ?? "";
+  const externalVault = process.env.MOONWELL_VAULT ?? "";
 
   const verifier = m.getParameter("verifier", m.getAccount(0));
   const treasury = m.getParameter("treasury", m.getAccount(0));
   const protocolFeeBps = m.getParameter("protocolFeeBps", 500);
-  const minBond = m.getParameter("minBond", USDC(0.5));
-  const minChallengerBond = m.getParameter("minChallengerBond", USDC(0.05));
+  const minDeposit = m.getParameter("minDeposit", USDC(0.5));
+  // 1 day default; the demo shortens this via setDisputeWindow if needed.
+  const disputeWindow = m.getParameter("disputeWindow", 24 * 3600);
 
   let usdcAddr: any;
   let vaultAddr: any;
@@ -46,15 +46,15 @@ export default buildModule("ProofStakeModule", (m) => {
     vaultAddr = m.contract("MockMoonwellVault", [usdc]);
   }
 
-  const proofStake = m.contract("ProofStake", [
+  const skinBook = m.contract("SkinBook", [
     usdcAddr,
     vaultAddr,
     verifier,
     treasury,
     protocolFeeBps,
-    minBond,
-    minChallengerBond,
+    minDeposit,
+    disputeWindow,
   ]);
 
-  return { proofStake };
+  return { skinBook };
 });

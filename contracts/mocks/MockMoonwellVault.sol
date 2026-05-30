@@ -10,7 +10,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///      factory at 0xe770BD40b6976Efbbb095174395DD2cb794c938a and per-asset
 ///      vaults like mUSDC). Those live on Base *mainnet*; Base Sepolia has only
 ///      partial Moonwell test deployments, so for the testnet demo we stand in
-///      with this Moonwell-interface-compatible mock. ProofStake only depends on
+///      with this Moonwell-interface-compatible mock. SkinBook only depends on
 ///      the ERC4626 surface (deposit / redeem / convertToAssets), so swapping
 ///      this for a real Moonwell 4626 vault on mainnet is a one-line address
 ///      change. Yield is simulated by `simulateYield`, which donates underlying

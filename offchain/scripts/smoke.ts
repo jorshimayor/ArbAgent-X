@@ -1,75 +1,59 @@
-// Offline smoke test for the off-chain stack. Verifies the deterministic task
-// engine, the judge, and receipt signing/verification without needing a chain.
-// If an agent is running on AGENT_URL, it also exercises the live x402 handshake.
 import { ethers } from "ethers";
-import { evaluate, canonical } from "../shared/task.js";
-import { judge } from "../verifier/judge.js";
-import { signReceipt, makeRequestId, verifyReceipt } from "../shared/receipt.js";
-import { getProfileSpec } from "../agents/profiles.js";
-import type { JobResult, TaskRequest } from "../shared/types.js";
+import { SKINBOOK_ABI, ERC20_ABI } from "../shared/abi.js";
+import { toUsdc, fromUsdc, BOOKING_STATUS } from "../shared/chain.js";
 
-let failures = 0;
-function check(name: string, cond: boolean) {
-  console.log(`${cond ? "  ok  " : " FAIL "} ${name}`);
-  if (!cond) failures++;
-}
+/**
+ * Offline smoke test — no chain, no keys. Proves the calldata-building logic the
+ * prepare service relies on: the SkinBook + ERC20 ABIs encode every booking
+ * action correctly, and the USDC helpers round-trip.
+ */
 
-async function buildJob(profile: "good" | "mediocre" | "malicious", input: string): Promise<JobResult> {
-  const spec = getProfileSpec(profile);
-  const req: TaskRequest = { kind: "math", input };
-  const output = spec.solve(req);
-  const wallet = new ethers.Wallet(ethers.id(`smoke:${profile}`));
-  const requestId = makeRequestId(req, "nonce");
-  const receipt = await signReceipt(wallet, 1, requestId, output);
-  return { agentId: 1, endpoint: "local", request: req, output, receipt, servedAt: Date.now() };
+const sb = new ethers.Interface(SKINBOOK_ABI);
+const erc20 = new ethers.Interface(ERC20_ABI);
+const SKINBOOK = "0x000000000000000000000000000000000000dEaD";
+
+let pass = 0;
+function check(name: string, data: string, expectFragment: string) {
+  const sel = data.slice(0, 10);
+  if (!data.startsWith("0x") || data.length < 10) throw new Error(`${name}: bad calldata`);
+  console.log(`  ✓ ${name.padEnd(22)} ${sel}  (${expectFragment})`);
+  pass++;
 }
 
 async function main() {
-  console.log("task engine:");
-  check("2 + 2 * 5 = 12", evaluate("2 + 2 * 5") === 12);
-  check("(2 + 2) * 5 = 20", evaluate("(2 + 2) * 5") === 20);
-  check("10 / 4 = 2.5", canonical(evaluate("10 / 4")) === "2.5");
+  console.log("SkinBook offline smoke\n");
 
-  console.log("\njudge + receipts:");
-  const good = await buildJob("good", "10 / 4");
-  check("good agent passes", judge(good).correct);
-  check("good receipt verifies", verifyReceipt(good.receipt, good.output));
+  console.log("USDC helpers:");
+  const amt = toUsdc(2.5);
+  if (amt !== 2_500_000n) throw new Error("toUsdc mismatch");
+  if (fromUsdc(amt) !== 2.5) throw new Error("fromUsdc mismatch");
+  console.log(`  ✓ toUsdc(2.5) = ${amt}  fromUsdc -> ${fromUsdc(amt)}\n`);
 
-  const mediocre = await buildJob("mediocre", "10 / 4"); // floors 2.5 -> 2
-  check("mediocre agent flagged on decimals", !judge(mediocre).correct);
-
-  const bad = await buildJob("malicious", "2 + 2 * 5"); // returns 42
-  check("malicious agent flagged", !judge(bad).correct);
-
-  // Tampered output should fail receipt verification.
-  check("tampered output fails receipt", !verifyReceipt(good.receipt, "999"));
-
-  // Optional live agent check.
-  const url = process.env.AGENT_URL;
-  if (url) {
-    console.log(`\nlive agent @ ${url}:`);
-    const unpaid = await fetch(`${url}/task`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "math", input: "2+2" }),
-    });
-    check("unpaid request returns 402", unpaid.status === 402);
-
-    const paid = await fetch(`${url}/task`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "X-PAYMENT": "demo" },
-      body: JSON.stringify({ kind: "math", input: "2+2" }),
-    });
-    check("paid request returns 200", paid.status === 200);
-    if (paid.ok) {
-      const body = await paid.json();
-      check("agent output is 4", body.output === "4");
-      check("agent receipt verifies", verifyReceipt(body.receipt, body.output));
-    }
+  console.log("Status enum mirror:");
+  if (BOOKING_STATUS[5] !== "Slashed" || BOOKING_STATUS[2] !== "Refunded") {
+    throw new Error("BOOKING_STATUS mirror out of sync");
   }
+  console.log(`  ✓ [${BOOKING_STATUS.join(", ")}]\n`);
 
-  console.log(`\n${failures === 0 ? "ALL GREEN" : failures + " FAILURES"}`);
-  process.exit(failures === 0 ? 0 : 1);
+  console.log("Calldata encoding (the prepare batch):");
+  check("approve", erc20.encodeFunctionData("approve", [SKINBOOK, toUsdc(2)]), "ERC20.approve");
+  check("registerBusiness", sb.encodeFunctionData("registerBusiness", ["Tony's Bistro", toUsdc(2), 86400, 7200]), "register");
+  check("book", sb.encodeFunctionData("book", [1, Math.floor(Date.now() / 1000) + 86400]), "book");
+  check("cancel", sb.encodeFunctionData("cancel", [1]), "cancel");
+  check("confirmAttendance", sb.encodeFunctionData("confirmAttendance", [1]), "confirm");
+  check("claimNoShow", sb.encodeFunctionData("claimNoShow", [1]), "claim");
+  check("settleNoShow", sb.encodeFunctionData("settleNoShow", [1]), "settle");
+  check("dispute", sb.encodeFunctionData("dispute", [1]), "dispute");
+  check("resolveDispute", sb.encodeFunctionData("resolveDispute", [1, true]), "resolve");
+
+  // Round-trip decode a representative call to prove the ABI is consistent.
+  const decoded = sb.decodeFunctionData("book", sb.encodeFunctionData("book", [7, 1893456000]));
+  if (Number(decoded[0]) !== 7) throw new Error("book decode mismatch");
+
+  console.log(`\nAll ${pass} calldata checks passed. ✅`);
 }
 
-main();
+main().catch((e) => {
+  console.error("smoke failed:", e);
+  process.exit(1);
+});

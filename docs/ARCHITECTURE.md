@@ -1,12 +1,13 @@
-# ProofStake — x402 with skin in the game
+# SkinBook — no-show deposits with skin in the game
 
-> A marketplace of x402-paid AI agents on Base where every agent posts a
-> **slashable, yield-bearing USDC bond**. Pay an agent, and if it lies, you
-> challenge it and take its bond. Honesty is the profitable strategy.
+> Book a slot at a business and post a **refundable, yield-bearing USDC deposit**
+> on Base. Show up (or cancel in time) and get it back *with* the yield it earned
+> while you waited; no-show and the deposit is slashed to the business. Reliability
+> is the profitable strategy — on both sides of the counter.
 
-- **Live contract (Base Sepolia):** `0x2aCd7fdB4d51Eb61BbDC976c7041f1fF7EeE6a94`
-- **Bond vault (ERC-4626):** `0xe9f109b826de37A6481eAfC60985B5b36763558B`
+- **Network:** Base Sepolia (`chainId 84532`) for the demo; one address swap to Base mainnet.
 - **USDC (Circle, Base Sepolia):** `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
+- **Deposit vault (ERC-4626):** a Moonwell USDC vault on mainnet; a Moonwell-shaped mock on Base Sepolia.
 
 ---
 
@@ -14,58 +15,74 @@
 
 ### The problem
 
-[x402](https://x402.org) is a clean answer to *"how does an agent pay for a
-service?"* — an HTTP 402 handshake that settles stablecoin payment per request.
-But payment is not quality. x402 guarantees the agent **gets paid**; it
-guarantees nothing about whether the agent **did the work correctly**.
+No-shows are a quiet tax on every appointment business — restaurants, dental and
+medical clinics, barbers, salons, studios. An empty reserved slot is revenue that
+can never be recovered. The standard defence is a **card hold or pre-charge**: the
+business (or its booking platform) puts a hold on the customer's card and captures
+it if they don't show.
 
-In an agent-to-agent economy this is the whole ballgame. A router picking the
-"best" agent purely on price will always pick the cheapest one — which is
-exactly the agent with the least incentive to be honest. There is no cost to
-returning garbage. The naive market selects *for* fraud.
+That fix has three problems. It's **opaque** — the customer can't see the rules or
+the money. It's **dead capital** — the held amount earns the customer nothing and
+just sits in a processor's ledger. And it's **business-adjudicated** — the business
+decides whether you showed up, with no recourse for the customer if it lies.
 
-### The ProofStake answer
+### The SkinBook answer
 
-ProofStake adds the missing half: **financial accountability**.
+SkinBook turns the deposit into something *productive and fair*.
 
-1. **Bond to play.** To list in the registry, an agent deposits a USDC bond.
-   The bond sits in a Moonwell ERC-4626 vault and earns yield while the agent is
-   idle, so honest agents are *paid to wait*.
-2. **Get paid per job via x402.** Clients pay the agent's price through the
-   standard x402 flow. Nothing new for the client to learn.
-3. **Challenge bad output.** Any client who receives a wrong answer can open a
-   challenge by staking a smaller bond plus the agent's **signed receipt** as
-   evidence.
-4. **Objective slashing.** A verifier re-computes the ground truth. If the
-   output was wrong, the challenge is *upheld*: **100% of the agent's bond is
-   redeemed from the vault and paid to the challenger** (minus a small protocol
-   fee), the agent is deactivated, and its `timesSlashed` counter increments.
-5. **Reputation re-routes traffic.** A slash tanks the agent's routing score,
-   so the router stops sending it work. Skin in the game wins.
+1. **Deposit to book.** To reserve a slot, the customer deposits the business's
+   required USDC. The deposit goes straight into a **Moonwell ERC-4626 vault** and
+   earns yield the entire time it's held, so the customer is *paid to wait*.
+2. **Most bookings self-resolve — no arbiter.** Cancel before the cutoff
+   (`cancel`) → trustless refund + yield. The business confirms you showed up
+   (`confirmAttendance`) → refund + yield to you. The business gains nothing by
+   confirming, so it has no incentive to lie on the honest path.
+3. **No-show → slash.** If you don't show, the business files a no-show after a
+   grace period (`claimNoShow`). After a bounded **dispute window** with no
+   challenge, anyone can `settleNoShow` and the deposit is slashed to the business
+   (minus a small protocol fee).
+4. **Contested no-show → bounded arbitration.** If the business filed a false
+   no-show, the customer `dispute`s inside the window. Only *then* does the trusted
+   arbiter (`verifier`) step in via `resolveDispute` — refund the customer or
+   uphold the slash.
+5. **Reliability is visible.** Every business carries an on-chain
+   `bookingsHonored / noShows` record that feeds a public reliability score, so
+   customers (and booking agents) can see who honours deposits before they book.
 
-The result: cheating is *negative expected value*. An agent that lies loses a
-bond worth far more than the per-call fee it collected.
+The result: no-shows carry a real cost to the customer, false no-shows carry a real
+risk to the business, and honest behaviour on both sides compounds Moonwell yield
+plus on-chain reputation.
+
+### Why the trust model is fairer than ProofStake's
+
+SkinBook reuses the yield-bearing-deposit-and-slash core from the earlier
+ProofStake design, but inverts its default. ProofStake routed *every* job through a
+verifier verdict. SkinBook makes the **arbiter the exception**: the honest paths
+(`cancel`, `confirmAttendance`) are fully trustless, and the arbiter is only
+reachable through a customer `dispute` inside a bounded window. Fewer transactions
+touch the trusted role, so there is less trust surface to abuse.
 
 ---
 
 ## 2. System map
 
 ```
-                         ┌──────────────────────────────────────┐
-                         │  Base (Sepolia) — ProofStake.sol      │
-                         │  registry • bonds • challenges • slash │
-                         └───────▲───────────────▲───────────────┘
-                                 │ register/topUp │ recordJob/resolve
-                                 │ challenge      │ (verifier)
-       ┌───────────┐  x402 pay   │                │
- MCP   │  Router   │────────────►│  Agent servers │◄──── Verifier
- host  │ (mcp.ts)  │  /task      │  :4001/2/3     │      (re-computes
- (you) └─────┬─────┘             │  x402-gated    │       ground truth)
-             │ proofstake_route  └───────┬────────┘
-             │                           │ signed receipt + evidence
-             ▼                           ▼
-        ranks agents              Evidence store (:4100)
-       reputation ÷ price         serves the challengeable JSON
+                         ┌────────────────────────────────────────┐
+                         │  Base (Sepolia) — SkinBook.sol           │
+                         │  registry • deposits • no-show settle     │
+                         └──────▲────────────────▲──────────────────┘
+                                │ book / cancel  │ settleNoShow (anyone)
+                                │ confirm / claim │ resolveDispute (arbiter)
+       ┌────────────┐  prepare  │ dispute        │
+ MCP   │ Base MCP   │──────────►│  unsigned       │◄──── Keeper / arbiter
+ host  │ skill      │  calldata │  calldata only  │      (settles uncontested;
+ (you) │ plugin     │           │  (no keys)      │       resolves disputes)
+       └─────┬──────┘           └───────▲─────────┘
+             │ send_calls               │ (optional, separate money)
+             ▼                  ┌────────┴─────────┐
+     user signs in              │ x402 reservation │  non-refundable
+     Base Account               │ desk (:4300)     │  booking fee
+                                └──────────────────┘
                                           │
                                   Dashboard (Next.js) reads
                                   live chain state + events
@@ -73,259 +90,233 @@ bond worth far more than the per-call fee it collected.
 
 Three protocols, each doing exactly one job:
 
-| Protocol     | Role in ProofStake                                              |
-|--------------|----------------------------------------------------------------|
-| **Base MCP** | The discovery + routing surface agents/hosts call to pick whom to pay |
-| **x402**     | The payment rail — pay-per-task with a 402 handshake           |
-| **Moonwell** | The bond vault — bonds earn yield idle, slashing redeems them  |
+| Protocol     | Role in SkinBook                                                  |
+|--------------|------------------------------------------------------------------|
+| **Base MCP** | The action surface — the user's assistant proposes book/cancel/etc. and the user approves in their Base Account |
+| **Moonwell** | The deposit vault — deposits earn yield while held, refund/slash redeems them |
+| **x402**     | *Optional.* A non-refundable per-reservation booking fee, separate from the refundable deposit |
 
 ---
 
-## 3. How Base MCP is implemented
+## 3. How Base MCP is implemented (no-custody actions)
 
-The router is a Model Context Protocol server (`offchain/router/mcp.ts`) spoken
-over stdio, so it drops into any MCP-capable host (Claude, Cursor, the Base MCP
-host). It exposes three tools:
+The Base MCP article's requirement is: the agent *proposes*, the **user approves in
+their Base Account**, and the MCP layer never holds a key. SkinBook ships exactly
+that as a **skill plugin** — `plugins/skinbook.md` backed by the **prepare service**
+(`offchain/prepare/server.ts`).
 
-- **`proofstake_list_agents`** — every active agent enriched with bond,
-  reputation, price, and routing score.
-- **`proofstake_route(kind, input?)`** — the headline tool. Picks the best agent
-  for a task and returns *who to call*, *its x402 price*, and *how to pay*:
-  ```json
-  {
-    "task": { "kind": "math" },
-    "chosen": {
-      "agentId": 1, "name": "...", "endpoint": ".../task",
-      "priceUsd": 0.002, "bondUsd": 2.00,
-      "successRate": 100.0, "timesSlashed": 0, "score": 1.84
-    },
-    "howToPay": "POST the task to `endpoint`; the agent answers 402 with an x402
-                 payment spec, pay it, and resubmit with the X-PAYMENT header.",
-    "alternatives": [ ... ]
-  }
-  ```
-- **`proofstake_reputation(agentId)`** — on-chain reputation for one agent
-  (jobs served/successful, times slashed, current bond value).
-
-### The routing score
-
-Routing is what makes the bond *matter*. The score
-(`offchain/shared/registry.ts → scoreAgent`) is **reputation ÷ price**:
-
-```ts
-reputation = (0.5 + 0.5 * successRate)   // honesty history
-           * log10(10 + bondUsd)         // size of skin in the game
-           * (timesSlashed > 0 ? 0.1 : 1) // a slash craters the score
-score      = reputation / priceUsd
-```
-
-A larger bond and a clean record lift an agent; a single slash multiplies its
-score by 0.1 and effectively removes it from contention. This is what turns an
-on-chain slash into real economic consequence: the agent doesn't just lose its
-bond, it loses all future routed traffic.
-
-`enrichActiveAgents()` reads `listActive()` from the contract, pulls each
-agent's on-chain stats and live `bondValue`, pings each agent's `/info`
-endpoint for name/price/liveness, scores them, and returns the list sorted by
-score descending.
-
----
-
-## 3b. The Base MCP skill plugin (no-custody actions)
-
-The router above is for *discovery*. To take **action** the way the Base MCP
-article requires — agent proposes, the user approves in their Base Account, and
-the MCP layer never holds a key — ProofStake ships a real **skill plugin**:
-`plugins/proofstake.md` backed by the **prepare service** (`offchain/prepare/server.ts`).
-
-The plugin follows the four mandatory sections from the Base MCP custom-plugin
-spec:
+The plugin follows the four mandatory sections from the Base MCP custom-plugin spec:
 
 1. **Onboarding gate** — a `STOP` that forces Base MCP onboarding (`get_wallets`)
-   and a risk disclaimer before any action.
-2. **Read endpoints** — `GET /info`, `GET /agents`, `GET /reputation/:id` for
-   state, with units documented.
-3. **Prepare endpoints** — `POST /prepare/{register,topup,challenge,deactivate,withdraw}`
-   return **unsigned calldata** as a batch of `{ to, value, data, chainId }`
-   objects (token approvals included as the first call). The service uses
+   and a deposit/slash risk disclaimer before any action.
+2. **Read endpoints** — `GET /info`, `GET /businesses`, `GET /bookings`,
+   `GET /reliability/:id` for state, with USDC units documented.
+3. **Prepare endpoints** — `POST /prepare/{register-business, book, cancel,
+   confirm-attendance, claim-noshow, dispute}` return **unsigned calldata** as a
+   batch of `{ to, value, data, chainId }` objects (the USDC approval is batched as
+   the first call ahead of `book`). The service uses
    `ethers.Interface.encodeFunctionData` and **never touches a private key**.
-4. **`send_calls` mapping** — the assistant maps the returned `calls` into Base
-   MCP `send_calls` on the right `chainName`, gets an approval link, and the user
-   signs the atomic batch in their **Base Account**. Status is polled via
+4. **`send_calls` mapping** — the assistant maps the returned `calls` into Base MCP
+   `send_calls` on the right `chainName`, gets an approval link, and the user signs
+   the atomic batch in their **Base Account**. Status is polled via
    `get_request_status`.
 
-This is the crucial difference from a raw-key script: a user-facing action like
-opening a challenge is now `prepare → send_calls → Base Account approval`, so
-*nothing moves without the user*. The autonomous **verifier** role (`resolve`) is
-a protocol keeper and is intentionally *not* exposed as a user prepare endpoint.
+So a user-facing action like booking a slot is `prepare → send_calls → Base Account
+approval` — *nothing moves without the user*. The keeper roles (`settleNoShow`,
+`resolveDispute`) are protocol/arbiter actions and are intentionally *not* exposed
+as user prepare endpoints.
 
-Example — `POST /prepare/register {"endpoint":"…","bondUsdc":2}` returns:
+Example — `POST /prepare/book {"businessId":1,"slotTime":<ts>}` looks up the
+business's on-chain deposit and returns:
 
 ```json
 {
+  "description": "Book a slot at <business> and deposit 2.00 USDC into Moonwell.",
+  "chainId": 84532,
+  "chainName": "base-sepolia",
   "calls": [
-    { "to": "<USDC>",      "value": "0x0", "data": "0x095ea7b3…", "chainId": 84532 },
-    { "to": "<ProofStake>", "value": "0x0", "data": "0xea87152b…", "chainId": 84532 }
-  ],
-  "chainName": "base-sepolia"
+    { "to": "<USDC>",     "value": "0x0", "data": "0x095ea7b3…", "chainId": 84532, "summary": "Approve 2.00 USDC" },
+    { "to": "<SkinBook>", "value": "0x0", "data": "0x…",         "chainId": 84532, "summary": "book(1, <slotTime>)" }
+  ]
 }
 ```
 
----
+### The reliability score
 
-## 4. How x402 is implemented
+Discovery is what makes the deposit *matter* to a customer choosing where to book.
+`offchain/shared/registry.ts → scoreBusiness` ranks businesses by honored-booking
+rate weighted by volume:
 
-x402 is the payment rail on both sides of the call.
+```ts
+reliability = bookingsHonored / (bookingsHonored + noShows)   // or 1 with no history
+score       = reliability * log10(10 + bookingsHonored + noShows)
+```
 
-### Agent side — gating `/task` (`offchain/shared/x402gate.ts`)
-
-Each agent server (`offchain/agents/server.ts`) gates its `POST /task` route
-behind an x402 middleware:
-
-- **Real mode (`X402_ENABLED=true`):** uses `x402-express`'s
-  `paymentMiddleware(payTo, { "POST /task": { price: "$0.002", network } },
-  { url: facilitatorUrl })`, which settles real USDC through the configured
-  Base facilitator (`https://x402.org/facilitator`) via EIP-3009 gasless
-  transfer.
-- **Demo mode (default):** a self-contained gate that performs the *same* HTTP
-  402 handshake — an unpaid request gets `402` with the `accepts` payment
-  requirements (`scheme: "exact"`, `network`, `maxAmountRequired`, `payTo`,
-  `asset: "USDC"`); a request carrying an `X-PAYMENT` header is let through. This
-  keeps the entire flow runnable with no facilitator or funded wallet, while
-  staying byte-compatible with the real spec.
-
-### Client side — paying (`offchain/scripts/client.ts`)
-
-`payAndCall(endpoint, task)`:
-
-- **Real mode:** dynamic-imports `x402-fetch`, builds a signer with
-  `createSigner(network, CLIENT_PRIVATE_KEY)`, wraps fetch with
-  `wrapFetchWithPayment(fetch, signer, maxValue)`, and POSTs the task. The
-  wrapper transparently catches the `402`, signs the payment, and resubmits with
-  the `X-PAYMENT` header. The settled tx hash is decoded from the
-  `x-payment-response` header.
-- **Demo mode:** POSTs with `X-PAYMENT: "demo"` so the handshake completes
-  without moving funds.
-
-### Signed receipts — the evidence trail
-
-Every served task returns an **EIP-191 signed receipt**
-(`offchain/shared/receipt.ts`): the agent signs
-`keccak256(agentId, requestId, output)` with its wallet. This receipt is what
-makes a challenge *objective* — the agent cannot later deny it produced the
-output, because the output is signed by its own key. The agent also POSTs the
-full job to the evidence store (`:4100`), which returns an `evidenceURI` the
-challenger submits on-chain.
+A clean record and real volume lift a business; a string of upheld no-show *disputes*
+(i.e. false no-shows the business lost) drags reliability down. The dashboard's
+`skinbook_reliability()` panel renders this ranking live.
 
 ---
 
-## 5. How Moonwell is implemented
+## 4. How Moonwell is implemented
 
-The bond is not a dead deposit sitting in the contract — it lives in a
-**Moonwell ERC-4626 vault** and earns yield the whole time it
-secures the agent.
+The deposit is not a dead card hold — it lives in a **Moonwell ERC-4626 vault** and
+earns yield the whole time it secures the booking.
 
-### Bonds as vault shares
+### Deposits as vault shares
 
-`ProofStake.sol` holds each agent's bond as **vault shares**, not raw USDC:
+`SkinBook.sol` holds each booking's deposit as **vault shares**, not raw USDC:
 
-- **Register / top up** → `_depositToVault`:
+- **Book** → `_depositToVault`:
   ```solidity
+  usdc.safeTransferFrom(msg.sender, address(this), amount);
   usdc.forceApprove(address(vault), amount);
-  uint256 shares = vault.deposit(amount, address(this));
-  // shares credited to the agent's bond
+  shares = vault.deposit(amount, address(this));   // shares recorded on the booking
   ```
-- **Current bond value** is read live from the vault:
+- **Current deposit value** is read live from the vault:
   ```solidity
-  function bondValue(uint256 id) → vault.convertToAssets(agent.shares)
+  function bookingValue(uint256 id) → vault.convertToAssets(bookings[id].shares)
   ```
-  Because the vault accrues yield, `convertToAssets(shares)` grows over time —
-  so an honest agent's bond is **worth more than it deposited**. (In the live
-  dashboard this shows as the Good agent's bond ticking above its $2.00
-  principal.) Honest agents are paid to keep their stake online.
+  Because the vault accrues yield, `convertToAssets(shares)` grows over time — so a
+  refunded customer gets back **more than they deposited**. (In the dashboard this
+  shows as each business's held deposits ticking above their principal.)
 
-- **Slash** → atomic redeem, on an upheld challenge:
+- **Refund** → atomic redeem straight to the customer, yield riding with principal:
+  ```solidity
+  assets = vault.redeem(shares, customer, address(this));   // cancel / confirm / dispute-won
+  ```
+- **Slash** → atomic redeem, fee skimmed, remainder to the business:
   ```solidity
   uint256 assets = vault.redeem(shares, address(this), address(this));
-  // protocolFeeBps → treasury
-  // remainder + challenger's bond → challenger
+  fee = assets * protocolFeeBps / 10_000;   // → treasury
+  // assets − fee → business owner
   ```
-  The shares convert back to liquid USDC in the same transaction that pays the
-  challenger, so there is no settlement gap.
+  The shares convert back to liquid USDC in the same transaction that pays out, so
+  there is no settlement gap.
 
-The constructor enforces `vault.asset() == usdc`, so the bond asset and the
-vault's underlying can never diverge. Moonwell exposes real ERC-4626 vaults on
-Base **mainnet** (ERC20 4626 factory `0xe770BD40b6976Efbbb095174395DD2cb794c938a`,
-per-asset vaults like mUSDC `0xedc817a2…`); Base Sepolia only has partial Moonwell
-test deployments, so the testnet demo uses a Moonwell-interface-compatible mock
-(`MockMoonwellVault`) over real Circle USDC. Moving to mainnet is a one-line
-address change (`MOONWELL_VAULT=…`) — the contract only ever talks to the
-ERC-4626 interface, so no code changes.
+The constructor enforces `vault.asset() == usdc`, so the deposit asset and the
+vault's underlying can never diverge. Moonwell exposes real ERC-4626 vaults on Base
+**mainnet** (ERC20 4626 factory `0xe770BD40b6976Efbbb095174395DD2cb794c938a`); Base
+Sepolia only has partial Moonwell test deployments, so the testnet demo uses a
+Moonwell-interface-compatible mock (`MockMoonwellVault`) over real Circle USDC.
+Moving to mainnet is a one-line address change (`MOONWELL_VAULT=…`) — the contract
+only ever talks to the ERC-4626 interface, so no code changes.
 
-### Key contract surface (`contracts/ProofStake.sol`)
+### Booking lifecycle (state machine)
 
-| Function                                    | Who        | Effect                                                |
-|---------------------------------------------|------------|-------------------------------------------------------|
-| `register(endpoint, bond)`                  | operator   | deposit bond → vault shares, list agent               |
-| `topUp(id, amount)`                         | operator   | add to bond (more shares)                             |
-| `deactivate(id)` / `withdraw(id)`           | operator   | leave; `withdraw` after 7-day cooldown                |
-| `recordJob(id, requestId, success)`         | verifier   | append to reputation                                  |
-| `challenge(id, requestId, evidenceURI, bond)` | challenger | stake challenger bond, open a challenge             |
-| `resolve(challengeId, upheld)`              | verifier   | upheld → slash 100% to challenger + fee; else refund agent |
+```
+                cancel (before slot − cancellationWindow)        ┌────────────┐
+        ┌──────────────────────────────────────────────────────►│  Refunded  │ (terminal)
+        │       confirmAttendance (business)                     └────────────┘
+        │  ┌────────────────────────────────────────────────────────▲
+  ┌─────┴──┴─┐  claimNoShow            ┌───────────────┐  dispute     │ resolveDispute(true)
+  │  Booked  │───(after slot+grace)──► │ NoShowClaimed │──(in window)─┤
+  └──────────┘                         └───────┬───────┘              ▼
+                                               │             ┌─────────────┐ resolveDispute(false)
+                                  settleNoShow │             │  Disputed   │──────────┐
+                               (after window,  │             └─────────────┘          │
+                                anyone)        ▼                                       ▼
+                                        ┌────────────┐◄─────────────────────────  ┌────────────┐
+                                        │  Slashed   │ (terminal — deposit to business + fee)
+                                        └────────────┘
+```
 
-`WITHDRAW_COOLDOWN = 7 days` and `MAX_FEE_BPS = 2000` bound the trust surface;
-`resolve` is `onlyVerifier` and the verdict is reproducible from the signed
-evidence, so slashing is objective rather than discretionary.
+`MAX_FEE_BPS = 2000` caps the protocol fee, `disputeWindow` bounds how long a
+no-show claim stays contestable, and `resolveDispute` is `onlyVerifier` — so the
+trusted surface is small, bounded, and only reached on a contested no-show.
+
+### Key contract surface (`contracts/SkinBook.sol`)
+
+| Function                                          | Who         | Effect                                                     |
+|---------------------------------------------------|-------------|------------------------------------------------------------|
+| `registerBusiness(name, deposit, cancelWin, grace)` | business    | list a business + its booking policy                       |
+| `updateBusiness` / `deactivateBusiness`           | business    | edit policy / stop new bookings                            |
+| `book(businessId, slotTime)`                      | customer    | deposit → vault shares, open a booking                     |
+| `cancel(bookingId)`                               | customer    | before cutoff → refund + yield                             |
+| `confirmAttendance(bookingId)`                    | business    | customer showed → refund + yield to customer               |
+| `claimNoShow(bookingId)`                          | business    | after slot + grace → open the dispute window               |
+| `settleNoShow(bookingId)`                         | anyone      | after window, uncontested → slash to business + fee        |
+| `dispute(bookingId)`                              | customer    | within window → escalate to the arbiter                    |
+| `resolveDispute(bookingId, present)`              | arbiter     | present → refund customer; absent → slash to business      |
+
+---
+
+## 5. How x402 is implemented (optional booking fee)
+
+x402 is *not* the deposit rail — the refundable deposit lives on-chain in the vault.
+x402 covers a different, optional piece: a small **non-refundable booking fee** a
+business may charge just to *make* a reservation (the cost of holding the slot open),
+separate from the deposit that comes back.
+
+`offchain/reservation/server.ts` gates `POST /reserve` behind an x402 middleware
+(`offchain/shared/x402gate.ts`):
+
+- **Real mode (`X402_ENABLED=true`):** uses `x402-express`'s `paymentMiddleware`,
+  which settles real USDC through the configured Base facilitator
+  (`https://x402.org/facilitator`) via EIP-3009 gasless transfer.
+- **Demo mode (default):** a self-contained gate that performs the *same* HTTP 402
+  handshake — an unpaid request gets `402` with the `accepts` payment requirements
+  (`scheme: "exact"`, `network`, `maxAmountRequired`, `payTo`, `asset: "USDC"`); a
+  request carrying an `X-PAYMENT` header is let through. This keeps the flow runnable
+  with no facilitator or funded wallet, while staying byte-compatible with the spec.
+
+A successful `/reserve` returns a reservation authorization plus the next-step hint
+to `prepare → send_calls` the on-chain `book` (which posts the refundable deposit).
+The two money flows are deliberately independent.
 
 ---
 
 ## 6. End-to-end demo flow
 
-`offchain/scripts/demo-testnet.ts` runs the whole narrative on Base Sepolia:
+The narrative the dashboard tells, end to end:
 
-1. **Route** — rank active agents by reputation ÷ price. With no track record,
-   the naive score tops the *cheapest* agent (the malicious one) — *the exact
-   trap ProofStake exists to close.*
-2. **Honest job** — pay the good agent via x402, get a correct answer; verifier
-   `recordJob(..., true)`.
-3. **Bad actor** — pay the malicious agent, which returns junk regardless of
-   input.
-4. **Challenge** — client stakes a bond + the signed evidence URI.
-5. **Resolve** — verifier re-computes ground truth and slashes objectively.
-6. **Result** — malicious bond `$x → $0.00` (slashed, deactivated), challenger
-   USDC up by the bond payout.
-7. **Re-rank** — the slash deactivates the liar and the honest job lifts the
-   good agent; the router now picks the honest agent. **Skin in the game wins.**
+1. **List** — a business registers with a deposit policy (`registerBusiness`); it
+   appears in the reliability ranking with a "New" tier.
+2. **Book** — a customer `book`s a slot; the deposit is supplied to Moonwell and the
+   held value starts accruing yield live on the dashboard.
+3. **Honest paths** — the customer either `cancel`s in time or the business
+   `confirmAttendance`s; either way the deposit + yield is refunded, `bookingsHonored++`,
+   and the business's reliability climbs.
+4. **No-show** — a different booking goes unattended; after the grace period the
+   business `claimNoShow`s, opening the dispute window.
+5. **Settle** — the window passes uncontested, anyone calls `settleNoShow`, and the
+   deposit is slashed to the business (minus the protocol fee); `noShows++`.
+6. **Contested** — on a *false* no-show the customer `dispute`s; the arbiter
+   `resolveDispute(…, present)` refunds them and the business eats the loss on its
+   reliability score.
 
-Every step prints a BaseScan link (`https://sepolia.basescan.org/tx/<hash>`),
-and the Next.js dashboard reads the same contract live (on-chain state + the
-`AgentRegistered` / `JobRecorded` / `ChallengeOpened` / `ChallengeResolved`
-event feed).
+Every on-chain step emits an event the Next.js dashboard reads live
+(`BusinessRegistered` / `Booked` / `Cancelled` / `AttendanceConfirmed` /
+`NoShowSettled` / `DisputeResolved`), rendered as the booking/cancel/attended/no-show
+activity feed.
 
 ---
 
 ## 7. Running it locally
 
 ```bash
-# 1. agents (3 profiles: good / mediocre / malicious)
-#    each listens on :4001 / :4002 / :4003, x402-gates POST /task
-# 2. evidence store on :4100
-# 3. point env at the live contract (offchain/.env, dashboard/.env.local)
+# contract
+npx hardhat compile && npx hardhat test
 
-cd offchain
-npm run demo            # scripts/demo-testnet.ts — full route→pay→challenge→slash
+# off-chain (no-custody Base MCP layer)
+cd offchain && npm install
+npm run smoke         # offline: USDC round-trip, status mirror, calldata encoding
+npm run prepare       # Base MCP prepare/calldata service on :4200 (no keys)
+npm run reservation   # optional x402 booking-fee desk on :4300
+npm run keeper        # settles uncontested no-shows; surfaces disputes
 
-cd ../dashboard
-npm run dev             # live dashboard at :3001, reads the contract
+# dashboard
+cd ../dashboard && npm install && npm run dev   # http://localhost:3000
 ```
 
-Env lives in `offchain/.env` (RPC, contract addr, keys, `X402_ENABLED`) and
-`dashboard/.env.local` (contract addr, RPC, `VAULT_APY`, start block). Flip
-`X402_ENABLED=true` for real-USDC settlement through the Base facilitator.
+Env lives in `offchain/.env` (RPC, `SKINBOOK_ADDR`, `X402_ENABLED`, `KEEPER_PRIVATE_KEY`)
+and the dashboard reads `SKINBOOK_ADDR` + `RPC_URL` (falling back to demo data when
+unset). Flip `X402_ENABLED=true` for real-USDC booking-fee settlement through the
+Base facilitator.
 
 ### Contract verification (Etherscan API V2)
 
-Base contract data is served by **Etherscan API V2** — a single key works for
-Base and 60+ EVM chains via the `chainid` param (Base Sepolia = `84532`). Wire
-the existing key into `hardhat.config.ts`'s `etherscan.apiKey` to verify the
-deployed contract on BaseScan.
+Base contract data is served by **Etherscan API V2** — a single key works for Base
+and 60+ EVM chains via the `chainid` param (Base Sepolia = `84532`). Wire the key
+into `hardhat.config.ts`'s `etherscan.apiKey` to verify the deployed contract on
+BaseScan.

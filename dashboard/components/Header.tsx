@@ -11,22 +11,22 @@ export function Header({ live, network }: { live: boolean; network: string }) {
       >
         <div className="flex items-center gap-3">
           <div className="grid h-11 w-11 place-items-center rounded-xl bg-base-blue shadow-glow">
-            <span className="text-lg font-black">▣</span>
+            <span className="text-lg font-black">◷</span>
           </div>
           <div>
             <h1 className="text-2xl font-black tracking-tight">
-              Proof<span className="shimmer">Stake</span>
+              Skin<span className="shimmer">Book</span>
             </h1>
             <p className="text-xs font-medium text-white/45">
-              x402 with skin in the game
+              no-show deposits with skin in the game
             </p>
           </div>
         </div>
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-white/55">
-          Slashable agent reputation backed by yield-bearing USDC bonds on Base.
-          Bad outputs are challengeable — a valid challenge slashes the agent&apos;s
-          bond to the challenger. Honest agents compound Moonwell yield and on-chain
-          reputation.
+          Refundable booking deposits held as yield-bearing USDC on Base. Show up
+          or cancel in time and the deposit comes back — with the Moonwell yield it
+          earned while you waited. No-show and it&apos;s slashed to the business that
+          held your slot.
         </p>
       </motion.div>
 

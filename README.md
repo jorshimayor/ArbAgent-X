@@ -1,31 +1,40 @@
-# ProofStake
+# SkinBook
 
-**x402 with skin in the game.** Slashable agent reputation backed by yield-bearing USDC bonds on Base.
+**No-show deposits with skin in the game.** Refundable booking deposits held as yield-bearing USDC on Base.
 
-x402 lets agents charge per call but enforces nothing about quality. ProofStake makes agents *financially accountable*: every listed agent posts a USDC bond into a Moonwell ERC4626 vault. The bond earns yield while idle. A client who gets a bad output can challenge it; an upheld challenge slashes the bond to the challenger. Honest agents compound yield and onchain reputation.
+No-shows quietly bleed appointment businesses — restaurants, clinics, barbers, salons. The usual fix is a card hold, which is clunky, opaque, and earns the customer nothing. SkinBook makes the deposit *productive and fair*: a customer books a slot and posts a USDC deposit that goes straight into a Moonwell ERC4626 vault, **earning yield while it waits**. Show up or cancel in time → the deposit is refunded *with* its yield. No-show → the deposit is slashed to the business that held the slot.
 
-Built for the Base MCP bounty with **Base MCP + Moonwell + x402**. User actions (register / top-up / challenge) are exposed as a **Base MCP skill plugin** that returns unsigned calldata for one-click approval in the user's Base Account — the MCP layer never holds a private key (see `plugins/proofstake.md`).
+Built for the Base MCP bounty with **Base MCP + Moonwell** (and optional **x402** for the booking fee). Customer/business actions (register, book, cancel, confirm, dispute) are exposed as a **Base MCP skill plugin** that returns unsigned calldata for one-click approval in the user's Base Account — the MCP layer never holds a private key (see `plugins/skinbook.md`).
+
+## Why it's fairer than ProofStake's model
+
+SkinBook reuses the yield-bearing-deposit core from the earlier ProofStake design, but with a **better trust model**. Most bookings self-resolve on-chain with no arbiter at all:
+
+- **Customer cancels in time** (`cancel`) → trustless refund + yield.
+- **Business confirms attendance** (`confirmAttendance`) → refund + yield to the customer; the business gains nothing by confirming, so it has no reason to lie.
+
+Only a *contested* no-show ever touches the trusted arbiter (`verifier`), and only inside a bounded **dispute window**. The arbiter is the exception, not the per-transaction default.
 
 ## What's in this repo (v1 contract core)
 
-`contracts/ProofStake.sol` collapses the three PRD primitives into one contract:
+`contracts/SkinBook.sol` is one contract that holds the registry, the deposit vault, and the no-show settlement logic:
 
-- **AgentRegistry** — `register`, `topUp`, `deactivate`, `getReputation`, `listActive`
-- **BondVault** — bonds are deposited straight into a Moonwell ERC4626 USDC vault; principal earns yield, slashing redeems shares atomically for liquid USDC
-- **Slasher** — `challenge` (client stakes a bond + evidence URI) and `resolve` (trusted verifier upholds or rejects)
-
-v1 deliberately uses a single trusted verifier (called out openly per the PRD); a verifier committee is v2.
+- **Business registry** — `registerBusiness`, `updateBusiness`, `deactivateBusiness`, `getReliability`, `listActiveBusinesses`
+- **Deposit vault** — each booking's deposit is deposited straight into a Moonwell ERC4626 USDC vault; it earns yield while held, and refund/slash redeems the shares atomically for liquid USDC
+- **No-show settlement** — `book`, `cancel`, `confirmAttendance`, `claimNoShow`, `settleNoShow` (uncontested, anyone), `dispute` (customer), `resolveDispute` (arbiter)
 
 | Path | Purpose |
 |---|---|
-| `contracts/ProofStake.sol` | Registry + BondVault + Slasher |
+| `contracts/SkinBook.sol` | Registry + deposit vault + no-show settlement |
 | `contracts/mocks/MockUSDC.sol` | 6-decimal test USDC |
 | `contracts/mocks/MockMoonwellVault.sol` | Moonwell-shaped ERC4626 vault stand-in with `simulateYield` |
-| `test/ProofStake.test.ts` | Full Chai suite (register, yield, slash, withdraw, access control) |
-| `ignition/modules/ProofStake.ts` | Deploy module (auto-deploys mocks when `MOONWELL_VAULT` is unset) |
-| `scripts/seed-agents.ts` | Registers the 3 demo agents (good / mediocre / malicious) |
+| `test/SkinBook.test.ts` | Full Chai suite (register, book, cancel, attend, no-show, dispute, access control) |
+| `ignition/modules/SkinBook.ts` | Deploy module (auto-deploys mocks when `MOONWELL_VAULT` is unset) |
+| `scripts/seed-businesses.ts` | Registers the 3 demo businesses + seeds bookings |
 | `offchain/prepare/server.ts` | Base MCP prepare service — builds unsigned calldata (no keys) |
-| `plugins/proofstake.md` | Base MCP skill-plugin spec (onboarding gate, read/prepare endpoints, send_calls) |
+| `offchain/reservation/server.ts` | Optional x402-gated booking-fee desk |
+| `offchain/keeper/index.ts` | Keeper that settles uncontested no-shows / surfaces disputes |
+| `plugins/skinbook.md` | Base MCP skill-plugin spec (onboarding gate, read/prepare endpoints, send_calls) |
 
 ## Quickstart (Windows-native, no WSL)
 
@@ -40,63 +49,65 @@ Requires Node 20+. Solidity targets the Cancun EVM (required by OpenZeppelin 5.x
 ## Deploy to Base Sepolia
 
 1. Copy `.env.example` to `.env` and fill in `DEPLOYER_PRIVATE_KEY`, `BASESCAN_API_KEY`.
-2. To bond into a real Moonwell vault, set `USDC` and `MOONWELL_VAULT` to a Base **mainnet** Moonwell ERC4626 USDC vault (factory `0xe770BD40b6976Efbbb095174395DD2cb794c938a`). On Base Sepolia, leave `MOONWELL_VAULT` blank to deploy the Moonwell-shaped mock (Moonwell's real 4626 USDC vault is mainnet-only).
+2. To hold deposits in a real Moonwell vault, set `USDC` and `MOONWELL_VAULT` to a Base **mainnet** Moonwell ERC4626 USDC vault (factory `0xe770BD40b6976Efbbb095174395DD2cb794c938a`). On Base Sepolia, leave `MOONWELL_VAULT` blank to deploy the Moonwell-shaped mock (Moonwell's real 4626 USDC vault is mainnet-only).
 
 ```bash
-npx hardhat ignition deploy ./ignition/modules/ProofStake.ts --network baseSepolia
-PROOFSTAKE_ADDR=0x... npx hardhat run scripts/seed-agents.ts --network baseSepolia
+npx hardhat ignition deploy ./ignition/modules/SkinBook.ts --network baseSepolia
+SKINBOOK_ADDR=0x... npx hardhat run scripts/seed-businesses.ts --network baseSepolia
 ```
 
 ## Contract surface
 
 ```solidity
-register(string endpoint, uint256 bondAmount) returns (uint256 agentId)
-topUp(uint256 agentId, uint256 amount)
-deactivate(uint256 agentId)                       // starts 7-day cooldown
-withdraw(uint256 agentId)                          // principal + yield, post-cooldown
-getReputation(uint256 agentId)                     // (served, successful, slashed, active)
-bondValue(uint256 agentId)                         // live redeemable USDC (principal + yield)
-listActive() returns (uint256[])
+registerBusiness(name, depositAmount, cancellationWindow, gracePeriod) returns (uint256 businessId)
+updateBusiness(businessId, depositAmount, cancellationWindow, gracePeriod)
+deactivateBusiness(businessId)                      // stop new bookings; existing ones still resolve
 
-challenge(uint256 agentId, bytes32 requestId, string evidenceURI, uint256 challengerBond)
-resolve(uint256 challengeId, bool upheld)          // verifier only
-recordJob(uint256 agentId, bytes32 requestId, bool success)   // verifier only
+book(businessId, slotTime) returns (uint256 bookingId)   // deposit → vault shares
+cancel(bookingId)                                   // customer, before slot − cancellationWindow → refund + yield
+confirmAttendance(bookingId)                        // business → refund + yield to customer
+claimNoShow(bookingId)                              // business, after slot + gracePeriod → opens dispute window
+settleNoShow(bookingId)                             // anyone, after dispute window → slash to business
+dispute(bookingId)                                  // customer, within dispute window
+resolveDispute(bookingId, customerPresent)          // arbiter only
+
+bookingValue(bookingId)                             // live redeemable USDC (principal + yield)
+getReliability(businessId)                           // (bookingsHonored, noShows, active)
+listActiveBusinesses() returns (uint256[])
 ```
 
-**Upheld challenge** → 100% of the bond is redeemed from Moonwell, protocol fee skimmed to treasury, the rest plus the challenger's bond paid to the challenger; agent deactivated and `timesSlashed++`.
-**Rejected challenge** → challenger bond awarded to the operator; counts as a clean served job.
+**Refund paths** (`cancel`, `confirmAttendance`, `resolveDispute(…, true)`) → all shares are redeemed from Moonwell and the deposit **plus its accrued yield** goes to the customer; `bookingsHonored++`.
+**Slash paths** (`settleNoShow`, `resolveDispute(…, false)`) → shares redeemed, protocol fee skimmed to treasury, remainder paid to the business; `noShows++`.
 
 ## Off-chain stack (`offchain/`)
 
-Pure-Node/TypeScript, run with `tsx`. The demo task is deterministic arithmetic, so the verifier can re-compute ground truth and slash **objectively** — no subjective judging needed for the live demo.
+Pure-Node/TypeScript, run with `tsx`. The Base MCP layer is **no-custody**: it only ever builds unsigned calldata; nothing moves without the user signing in their Base Account.
 
 ```bash
 cd offchain && npm install
-npm run smoke                    # offline: task engine, judge, receipt sign/verify
-npm run evidence                 # IPFS-stand-in evidence store on :4100
-npm run agents                   # good (:4001) + mediocre (:4002) + malicious (:4003)
-npm run verifier                 # watches ChallengeOpened and resolves
+npm run smoke                    # offline: USDC round-trip, status mirror, calldata encoding
 npm run prepare                  # Base MCP prepare/calldata service on :4200 (no keys)
+npm run reservation              # optional x402-gated booking-fee desk on :4300
+npm run keeper                   # settles uncontested no-shows; surfaces disputes to the arbiter
 ```
 
-- **Agents** (`agents/server.ts`) — one configurable Express runner, three profiles. `POST /task` is x402-gated: an unpaid call returns `402` with the payment spec, a paid call returns the answer plus a wallet-**signed receipt** binding `(agentId, requestId, outputHash)`. `good` answers correctly, `mediocre` floors decimals, `malicious` always returns `42`. Uses the real `x402-express` middleware when `X402_ENABLED=true`, else a self-contained 402 handshake so it runs key-free.
-- **Verifier** (`verifier/index.ts`) — pulls the evidence record, re-runs the task, verifies the receipt, and calls `resolve(challengeId, upheld)`. Watch mode auto-resolves new challenges.
-- **Base MCP router** (`router/mcp.ts`) — an MCP server exposing `proofstake_route(task)`, `proofstake_list_agents`, and `proofstake_reputation`. `proofstake_route` scores every active agent by **reputation ÷ price** (slashing tanks the score) and returns the best agent + how to pay. Drop it into any MCP client.
-- **Base MCP skill plugin** (`plugins/proofstake.md` + `prepare/server.ts`) — turns ProofStake's user actions into a real Base MCP plugin. The prepare service builds **unsigned calldata** (`{to,value,data,chainId}`, with token approvals batched in) for `register` / `topUp` / `challenge` / `deactivate` / `withdraw`; the plugin spec maps that batch into Base MCP `send_calls`, so the user approves and signs in their **Base Account**. No private key ever touches the MCP layer.
+- **Base MCP skill plugin** (`plugins/skinbook.md` + `prepare/server.ts`) — turns SkinBook's user actions into a real Base MCP plugin. The prepare service builds **unsigned calldata** (`{to,value,data,chainId}`, with the USDC approval batched in front of `book`) for `register-business` / `book` / `cancel` / `confirm-attendance` / `claim-noshow` / `dispute`; the plugin spec maps that batch into Base MCP `send_calls`, so the user approves and signs in their **Base Account**. No private key ever touches the MCP layer.
+- **Reservation desk** (`reservation/server.ts`) — an optional x402-gated endpoint that charges a small **non-refundable booking fee** per reservation (separate from the on-chain refundable deposit). Uses the real `x402-express` middleware when `X402_ENABLED=true`, else a self-contained 402 handshake so it runs key-free.
+- **Keeper** (`keeper/index.ts`) — watches `NoShowClaimed`, and after the dispute window calls `settleNoShow` (anyone can); for `Disputed` bookings it surfaces the case for the arbiter's `resolveDispute`. Settling is permissionless; only the contested-dispute verdict needs the trusted arbiter.
 
 ## Dashboard (`dashboard/`)
 
-Animated Next.js operator dashboard (Tailwind + Framer Motion): total value bonded, **live-accruing Moonwell yield**, per-agent reputation rings, the `proofstake_route` ranking, and a live slash/challenge feed.
+Animated Next.js dashboard (Tailwind + Framer Motion): total deposits held, **live-accruing Moonwell yield**, per-business reliability rings and trust tiers, the `skinbook_reliability` ranking, and a live booking/cancel/attended/no-show feed.
 
 ```bash
 cd dashboard && npm install && npm run dev   # http://localhost:3000
 ```
 
-Reads live state from a deployed `ProofStake` when `PROOFSTAKE_ADDR` + `RPC_URL` are set, and falls back to a rich demo dataset otherwise — so it always demos well and lights up automatically against a chain.
+Reads live state from a deployed `SkinBook` when `SKINBOOK_ADDR` + `RPC_URL` are set, and falls back to a rich demo dataset otherwise — so it always demos well and lights up automatically against a chain.
 
 ## Status
 
-- Contract + tests: load-bearing, locally-verifiable core — **14 passing tests**.
-- Off-chain: agents (live x402 402→pay→serve handshake verified), verifier, MCP router (3 tools, validated over stdio) — **offline smoke suite green**.
-- Dashboard: runs, renders, yield visibly accrues, slash narrative on screen.
-- Follow-ups: deploy to Base Sepolia, point the dashboard at the live contract, and index real `ChallengeResolved`/`JobRecorded` events into the activity feed.
+- Contract + tests: load-bearing, locally-verifiable core — **13 passing tests**.
+- Off-chain: Base MCP prepare service (no-custody calldata), optional x402 reservation desk, no-show keeper — **offline smoke suite green**.
+- Dashboard: runs, renders, yield visibly accrues, no-show narrative on screen.
+- v1 deliberately uses a single trusted arbiter for *contested* no-shows only (called out openly); a verifier committee is v2.

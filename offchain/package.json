@@ -1,22 +1,14 @@
 {
-  "name": "proofstake-offchain",
+  "name": "skinbook-offchain",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "ProofStake off-chain stack: x402-gated agents, verifier, and Base MCP router.",
+  "description": "SkinBook off-chain stack: Base MCP prepare service, x402 reservation desk, and no-show keeper.",
   "scripts": {
-    "agent:good": "cross-env AGENT_PROFILE=good PORT=4001 tsx agents/server.ts",
-    "agent:mediocre": "cross-env AGENT_PROFILE=mediocre PORT=4002 tsx agents/server.ts",
-    "agent:bad": "cross-env AGENT_PROFILE=malicious PORT=4003 tsx agents/server.ts",
-    "agents": "concurrently -n good,mediocre,bad -c green,yellow,red \"npm:agent:good\" \"npm:agent:mediocre\" \"npm:agent:bad\"",
-    "verifier": "tsx verifier/index.ts",
-    "router": "tsx router/mcp.ts",
-    "evidence": "cross-env EVIDENCE_PORT=4100 tsx evidence/store.ts",
     "prepare": "cross-env PREPARE_PORT=4200 tsx prepare/server.ts",
-    "smoke": "tsx scripts/smoke.ts",
-    "client": "tsx scripts/client.ts",
-    "challenge": "tsx scripts/challenge.ts",
-    "demo": "tsx scripts/demo-testnet.ts"
+    "reservation": "cross-env RESERVATION_PORT=4300 tsx reservation/server.ts",
+    "keeper": "tsx keeper/index.ts",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",

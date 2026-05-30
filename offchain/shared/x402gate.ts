@@ -41,7 +41,7 @@ export async function makeX402Gate(opts: GateOpts): Promise<RequestHandler> {
       network: opts.network,
       maxAmountRequired: String(Math.round(opts.priceUsd * 1e6)),
       resource: opts.route,
-      description: "ProofStake agent task",
+      description: "SkinBook booking fee",
       payTo: opts.payTo,
       asset: "USDC",
       mimeType: "application/json",

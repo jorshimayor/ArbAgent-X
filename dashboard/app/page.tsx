@@ -3,13 +3,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { DashboardState } from "@/lib/types";
 import { Header } from "@/components/Header";
 import { StatGrid } from "@/components/StatGrid";
-import { AgentCard } from "@/components/AgentCard";
+import { BusinessCard } from "@/components/BusinessCard";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { RouterPanel } from "@/components/RouterPanel";
 
 const SECONDS_PER_YEAR = 31_536_000;
 // Visualization speed-up so Moonwell yield is visibly accruing during a 3-min demo.
-// Underlying bond values are real; only the live-accrual animation is scaled.
+// Underlying deposit values are real; only the live-accrual animation is scaled.
 const ACCRUAL_SPEED = 1200;
 
 export default function Page() {
@@ -37,53 +37,53 @@ export default function Page() {
     if (!state) return null;
     const accruedFactor = (elapsed / SECONDS_PER_YEAR) * ACCRUAL_SPEED;
     let totalAccrued = 0;
-    const agents = state.agents.map((a) => {
-      const accrued = a.active ? a.bondUsd * a.apy * accruedFactor : 0;
+    const businesses = state.businesses.map((b) => {
+      const accrued = b.active ? b.depositsHeldUsd * b.apy * accruedFactor : 0;
       totalAccrued += accrued;
       return {
-        agent: a,
-        liveBond: a.bondUsd + accrued,
-        liveYield: Math.max(0, a.bondUsd - a.principalUsd) + accrued,
+        business: b,
+        liveHeld: b.depositsHeldUsd + accrued,
+        liveYield: Math.max(0, b.depositsHeldUsd - b.principalHeldUsd) + accrued,
       };
     });
-    return { agents, totalAccrued };
+    return { businesses, totalAccrued };
   }, [state, elapsed]);
 
   if (!state || !computed) {
     return (
       <main className="grid min-h-screen place-items-center">
-        <p className="animate-pulse text-white/40">Loading ProofStake…</p>
+        <p className="animate-pulse text-white/40">Loading SkinBook…</p>
       </main>
     );
   }
 
-  const topId = [...state.agents].filter((a) => a.active).sort((a, b) => b.score - a.score)[0]?.agentId;
+  const topId = [...state.businesses].filter((b) => b.active).sort((a, b) => b.score - a.score)[0]?.businessId;
 
   return (
     <main className="mx-auto max-w-6xl px-5 py-10 md:px-8 md:py-14">
       <Header live={state.live} network={state.network} />
 
       <div className="mt-10">
-        <StatGrid agents={state.agents} accruedYield={computed.totalAccrued} vaultApy={state.vaultApy} />
+        <StatGrid businesses={state.businesses} accruedYield={computed.totalAccrued} vaultApy={state.vaultApy} />
       </div>
 
       <div className="mt-10 grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-white/60">Bonded agents</h2>
+          <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-white/60">Listed businesses</h2>
           <div className="grid gap-4 sm:grid-cols-2">
-            {computed.agents.map((c, i) => (
-              <AgentCard
-                key={c.agent.agentId}
-                agent={c.agent}
-                liveBond={c.liveBond}
+            {computed.businesses.map((c, i) => (
+              <BusinessCard
+                key={c.business.businessId}
+                business={c.business}
+                liveHeld={c.liveHeld}
                 liveYield={c.liveYield}
-                isTop={c.agent.agentId === topId}
+                isTop={c.business.businessId === topId}
                 index={i}
               />
             ))}
           </div>
           <div className="mt-6">
-            <RouterPanel agents={state.agents} />
+            <RouterPanel businesses={state.businesses} />
           </div>
         </div>
 
@@ -93,7 +93,7 @@ export default function Page() {
       </div>
 
       <footer className="mt-12 border-t border-white/5 pt-6 text-center text-xs text-white/30">
-        ProofStake · Built with Base MCP + Moonwell + x402 · v1 uses a single trusted verifier (called out openly)
+        SkinBook · Built with Base MCP + Moonwell + x402 · contested no-shows resolve via a single trusted arbiter (called out openly)
       </footer>
     </main>
   );

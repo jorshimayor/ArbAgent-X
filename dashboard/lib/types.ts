@@ -1,29 +1,29 @@
-export type Profile = "good" | "mediocre" | "malicious";
+export type Tier = "trusted" | "new" | "watch";
 
-export interface Agent {
-  agentId: number;
+export interface Business {
+  businessId: number;
   name: string;
-  profile: Profile;
-  operator: string;
-  endpoint: string;
-  bondUsd: number; // current redeemable value (principal + accrued yield)
-  principalUsd: number; // original bond
+  category: string; // e.g. "Restaurant", "Dental", "Barber"
+  owner: string;
+  depositUsd: number; // required deposit per booking
+  depositsHeldUsd: number; // current redeemable value of active deposits (principal + yield)
+  principalHeldUsd: number; // principal of active deposits
   apy: number; // Moonwell vault APY, e.g. 0.061
-  jobsServed: number;
-  jobsSuccessful: number;
-  timesSlashed: number;
-  priceUsd: number;
+  bookingsHonored: number; // attended or cancelled in time
+  noShows: number; // slashed no-shows
+  activeBookings: number; // deposits currently held in the vault
   active: boolean;
+  tier: Tier;
   score: number;
 }
 
-export type ActivityKind = "job" | "challenge" | "slash" | "register" | "yield";
+export type ActivityKind = "booking" | "cancel" | "attended" | "noshow" | "yield" | "register";
 
 export interface Activity {
   id: string;
   kind: ActivityKind;
-  agentId: number;
-  agentName: string;
+  businessId: number;
+  businessName: string;
   text: string;
   amountUsd?: number;
   txHash?: string;
@@ -34,6 +34,6 @@ export interface DashboardState {
   live: boolean; // true if read from chain, false if demo data
   network: string;
   vaultApy: number;
-  agents: Agent[];
+  businesses: Business[];
   activity: Activity[];
 }

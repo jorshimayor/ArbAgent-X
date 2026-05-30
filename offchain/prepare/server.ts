@@ -2,14 +2,14 @@ import express from "express";
 import cors from "cors";
 import { ethers } from "ethers";
 import * as dotenv from "dotenv";
-import { env, getProvider, getProofStakeRead, toUsdc, fromUsdc } from "../shared/chain.js";
-import { PROOFSTAKE_ABI, ERC20_ABI } from "../shared/abi.js";
-import { enrichActiveAgents } from "../shared/registry.js";
+import { env, getSkinBookRead, toUsdc, fromUsdc } from "../shared/chain.js";
+import { SKINBOOK_ABI, ERC20_ABI } from "../shared/abi.js";
+import { enrichActiveBusinesses, recentBookings } from "../shared/registry.js";
 
 dotenv.config();
 
 /**
- * ProofStake "prepare" service — the Base MCP skill-plugin backend.
+ * SkinBook "prepare" service — the Base MCP skill-plugin backend.
  *
  * This server NEVER holds or accesses a private key. It only *builds* unsigned
  * transaction calldata ({ to, value, data, chainId }) and hands it back to the
@@ -17,9 +17,10 @@ dotenv.config();
  * in their Base Account. This is the no-custody model the Base MCP article
  * requires — nothing moves without the user.
  *
- * Read endpoints (GET)  -> on-chain state (agents, reputation, markets).
- * Prepare endpoints (POST) -> batched unsigned calls for register / top-up /
- *                             challenge / deactivate / withdraw.
+ * Read endpoints (GET)  -> on-chain state (businesses, bookings).
+ * Prepare endpoints (POST) -> batched unsigned calls for registerBusiness /
+ *                             book / cancel / confirmAttendance / claimNoShow /
+ *                             dispute.
  */
 
 const PORT = Number(process.env.PREPARE_PORT ?? 4200);
@@ -40,7 +41,7 @@ function chainName(id: number): string {
   }
 }
 
-const psIface = new ethers.Interface(PROOFSTAKE_ABI);
+const sbIface = new ethers.Interface(SKINBOOK_ABI);
 const erc20Iface = new ethers.Interface(ERC20_ABI);
 
 interface Call {
@@ -56,22 +57,28 @@ function call(to: string, data: string, summary: string): Call {
   return { to, value: "0x0", data, chainId: env.chainId, summary };
 }
 
-// Cache the on-chain USDC + bond minimums so prepare calls are one round-trip.
-let cfg: { usdc: string; minBond: bigint; minChallengerBond: bigint } | null = null;
+// Cache the on-chain USDC + minimums so prepare calls are one round-trip.
+let cfg: { usdc: string; minDeposit: bigint } | null = null;
 async function getConfig() {
   if (cfg) return cfg;
-  const ps = getProofStakeRead();
-  if (!ps) throw new Error("PROOFSTAKE_ADDR not set");
-  const [usdc, minBond, minChallengerBond] = await Promise.all([
-    ps.usdc() as Promise<string>,
-    ps.minBond() as Promise<bigint>,
-    ps.minChallengerBond() as Promise<bigint>,
+  const sb = getSkinBookRead();
+  if (!sb) throw new Error("SKINBOOK_ADDR not set");
+  const [usdc, minDeposit] = await Promise.all([
+    sb.usdc() as Promise<string>,
+    sb.minDeposit() as Promise<bigint>,
   ]);
-  cfg = { usdc, minBond, minChallengerBond };
+  cfg = { usdc, minDeposit };
   return cfg;
 }
 
-// Resolve a USDC amount: explicit `amountUsdc` (a number) or fall back to a floor.
+// Look up a business's required deposit (the exact amount `book` will pull).
+async function depositForBusiness(businessId: number): Promise<bigint> {
+  const sb = getSkinBookRead();
+  if (!sb) throw new Error("SKINBOOK_ADDR not set");
+  const b = await sb.businesses(businessId);
+  return b.depositAmount as bigint;
+}
+
 function resolveAmount(amountUsdc: unknown, floor: bigint): bigint {
   if (amountUsdc === undefined || amountUsdc === null || amountUsdc === "") return floor;
   const n = Number(amountUsdc);
@@ -86,9 +93,8 @@ function prepared(description: string, calls: Call[]) {
     chainId: env.chainId,
     chainName: chainName(env.chainId),
     calls,
-    // The plugin maps each {to, value, data} into the send_calls `calls` array;
-    // Base MCP returns one approval link covering the whole atomic batch.
-    sendCallsHint: "Pass `calls` (to/value/data) to Base MCP send_calls on chain `chainName`; the user approves the batch in their Base Account.",
+    sendCallsHint:
+      "Pass `calls` (to/value/data) to Base MCP send_calls on chain `chainName`; the user approves the batch in their Base Account.",
   };
 }
 
@@ -97,20 +103,19 @@ async function main() {
   app.use(cors());
   app.use(express.json());
 
-  app.get("/health", (_req, res) => res.json({ ok: true, service: "proofstake-prepare" }));
+  app.get("/health", (_req, res) => res.json({ ok: true, service: "skinbook-prepare" }));
 
   // Plugin self-description / onboarding context.
   app.get("/info", async (_req, res) => {
     try {
       const c = await getConfig();
       res.json({
-        name: "ProofStake",
-        proofStakeAddr: env.proofStakeAddr,
+        name: "SkinBook",
+        skinBookAddr: env.skinBookAddr,
         usdc: c.usdc,
         chainId: env.chainId,
         chainName: chainName(env.chainId),
-        minBondUsd: fromUsdc(c.minBond),
-        minChallengerBondUsd: fromUsdc(c.minChallengerBond),
+        minDepositUsd: fromUsdc(c.minDeposit),
         custody: "none — this service only builds unsigned calldata; the user signs via Base Account / send_calls",
       });
     } catch (e: any) {
@@ -120,28 +125,37 @@ async function main() {
 
   // --- Read endpoints ---
 
-  app.get("/agents", async (_req, res) => {
+  app.get("/businesses", async (_req, res) => {
     try {
-      res.json({ agents: await enrichActiveAgents() });
+      res.json({ businesses: await enrichActiveBusinesses() });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  app.get("/reputation/:id", async (req, res) => {
+  app.get("/bookings", async (req, res) => {
     try {
-      const ps = getProofStakeRead();
-      if (!ps) throw new Error("PROOFSTAKE_ADDR not set");
+      const limit = req.query.limit ? Number(req.query.limit) : 20;
+      res.json({ bookings: await recentBookings(limit) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/reliability/:id", async (req, res) => {
+    try {
+      const sb = getSkinBookRead();
+      if (!sb) throw new Error("SKINBOOK_ADDR not set");
       const id = Number(req.params.id);
-      const rep = await ps.getReputation(id);
-      const bondUsd = fromUsdc(await ps.bondValue(id));
+      const rel = await sb.getReliability(id);
+      const b = await sb.businesses(id);
       res.json({
-        agentId: id,
-        jobsServed: Number(rep.jobsServed),
-        jobsSuccessful: Number(rep.jobsSuccessful),
-        timesSlashed: Number(rep.timesSlashed),
-        active: rep.active,
-        bondUsd,
+        businessId: id,
+        name: b.name,
+        bookingsHonored: Number(rel.bookingsHonored),
+        noShows: Number(rel.noShows),
+        active: rel.active,
+        depositUsd: fromUsdc(b.depositAmount),
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -150,90 +164,106 @@ async function main() {
 
   // --- Prepare endpoints (return unsigned calldata only) ---
 
-  // Register a new agent: approve USDC bond -> register(endpoint, bond).
-  app.post("/prepare/register", async (req, res) => {
+  // Register a business + booking policy. No token movement, so a single call.
+  app.post("/prepare/register-business", async (req, res) => {
     try {
-      const { endpoint, bondUsdc } = req.body ?? {};
-      if (!endpoint || typeof endpoint !== "string") throw new Error("endpoint (string) required");
+      const { name, depositUsdc, cancellationWindowSecs, gracePeriodSecs } = req.body ?? {};
+      if (!name || typeof name !== "string") throw new Error("name (string) required");
       const c = await getConfig();
-      const bond = resolveAmount(bondUsdc, c.minBond);
+      const deposit = resolveAmount(depositUsdc, c.minDeposit);
+      const cancelWin = Number(cancellationWindowSecs ?? 24 * 3600);
+      const grace = Number(gracePeriodSecs ?? 2 * 3600);
       const calls: Call[] = [
-        call(c.usdc, erc20Iface.encodeFunctionData("approve", [env.proofStakeAddr, bond]),
-          `approve ${fromUsdc(bond)} USDC to ProofStake`),
-        call(env.proofStakeAddr, psIface.encodeFunctionData("register", [endpoint, bond]),
-          `register agent at ${endpoint} with a ${fromUsdc(bond)} USDC bond`),
+        call(
+          env.skinBookAddr,
+          sbIface.encodeFunctionData("registerBusiness", [name, deposit, cancelWin, grace]),
+          `register business "${name}" with a ${fromUsdc(deposit)} USDC deposit`
+        ),
       ];
-      res.json(prepared(`Register an agent and bond ${fromUsdc(bond)} USDC into the Moonwell vault.`, calls));
+      res.json(prepared(`Register "${name}" with a ${fromUsdc(deposit)} USDC booking deposit.`, calls));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
 
-  // Top up an existing agent's bond: approve -> topUp(agentId, amount).
-  app.post("/prepare/topup", async (req, res) => {
+  // Book a slot: approve the business's deposit -> book(businessId, slotTime).
+  app.post("/prepare/book", async (req, res) => {
     try {
-      const { agentId, amountUsdc } = req.body ?? {};
-      if (agentId === undefined) throw new Error("agentId required");
+      const { businessId, slotTime } = req.body ?? {};
+      if (businessId === undefined) throw new Error("businessId required");
+      const slot = Number(slotTime);
+      if (!Number.isFinite(slot) || slot <= Math.floor(Date.now() / 1000)) {
+        throw new Error("slotTime must be a future unix timestamp (seconds)");
+      }
       const c = await getConfig();
-      const amount = resolveAmount(amountUsdc, 1n); // any positive amount
+      const deposit = await depositForBusiness(Number(businessId));
       const calls: Call[] = [
-        call(c.usdc, erc20Iface.encodeFunctionData("approve", [env.proofStakeAddr, amount]),
-          `approve ${fromUsdc(amount)} USDC to ProofStake`),
-        call(env.proofStakeAddr, psIface.encodeFunctionData("topUp", [Number(agentId), amount]),
-          `top up agent #${agentId} bond by ${fromUsdc(amount)} USDC`),
+        call(c.usdc, erc20Iface.encodeFunctionData("approve", [env.skinBookAddr, deposit]),
+          `approve ${fromUsdc(deposit)} USDC deposit to SkinBook`),
+        call(env.skinBookAddr, sbIface.encodeFunctionData("book", [Number(businessId), slot]),
+          `book business #${businessId} for slot ${new Date(slot * 1000).toISOString()}`),
       ];
-      res.json(prepared(`Top up agent #${agentId}'s Moonwell-backed bond by ${fromUsdc(amount)} USDC.`, calls));
+      res.json(prepared(`Book business #${businessId}, depositing ${fromUsdc(deposit)} USDC into the Moonwell vault.`, calls));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
 
-  // Challenge an agent's output: approve challenger bond -> challenge(...).
-  app.post("/prepare/challenge", async (req, res) => {
+  // Cancel in time (customer): cancel(bookingId).
+  app.post("/prepare/cancel", async (req, res) => {
     try {
-      const { agentId, requestId, evidenceURI, bondUsdc } = req.body ?? {};
-      if (agentId === undefined) throw new Error("agentId required");
-      if (!requestId || !ethers.isHexString(requestId, 32)) throw new Error("requestId must be a 32-byte hex string");
-      if (!evidenceURI || typeof evidenceURI !== "string") throw new Error("evidenceURI (string) required");
-      const c = await getConfig();
-      const bond = resolveAmount(bondUsdc, c.minChallengerBond);
+      const { bookingId } = req.body ?? {};
+      if (bookingId === undefined) throw new Error("bookingId required");
       const calls: Call[] = [
-        call(c.usdc, erc20Iface.encodeFunctionData("approve", [env.proofStakeAddr, bond]),
-          `approve ${fromUsdc(bond)} USDC challenger bond to ProofStake`),
-        call(env.proofStakeAddr, psIface.encodeFunctionData("challenge", [Number(agentId), requestId, evidenceURI, bond]),
-          `open a challenge against agent #${agentId} staking ${fromUsdc(bond)} USDC`),
+        call(env.skinBookAddr, sbIface.encodeFunctionData("cancel", [Number(bookingId)]),
+          `cancel booking #${bookingId} and refund the deposit (+ yield)`),
       ];
-      res.json(prepared(`Challenge agent #${agentId}'s output, staking ${fromUsdc(bond)} USDC.`, calls));
+      res.json(prepared(`Cancel booking #${bookingId} (refund deposit + accrued Moonwell yield).`, calls));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
 
-  // Deactivate an agent (operator only): deactivate(agentId).
-  app.post("/prepare/deactivate", async (req, res) => {
+  // Business confirms the customer showed: confirmAttendance(bookingId).
+  app.post("/prepare/confirm-attendance", async (req, res) => {
     try {
-      const { agentId } = req.body ?? {};
-      if (agentId === undefined) throw new Error("agentId required");
+      const { bookingId } = req.body ?? {};
+      if (bookingId === undefined) throw new Error("bookingId required");
       const calls: Call[] = [
-        call(env.proofStakeAddr, psIface.encodeFunctionData("deactivate", [Number(agentId)]),
-          `deactivate agent #${agentId} (starts the 7-day withdraw cooldown)`),
+        call(env.skinBookAddr, sbIface.encodeFunctionData("confirmAttendance", [Number(bookingId)]),
+          `confirm attendance for booking #${bookingId} and refund the customer`),
       ];
-      res.json(prepared(`Deactivate agent #${agentId}.`, calls));
+      res.json(prepared(`Confirm attendance for booking #${bookingId} (refunds the customer).`, calls));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
   });
 
-  // Withdraw a deactivated agent's bond after cooldown: withdraw(agentId).
-  app.post("/prepare/withdraw", async (req, res) => {
+  // Business files a no-show: claimNoShow(bookingId). Opens the dispute window.
+  app.post("/prepare/claim-noshow", async (req, res) => {
     try {
-      const { agentId } = req.body ?? {};
-      if (agentId === undefined) throw new Error("agentId required");
+      const { bookingId } = req.body ?? {};
+      if (bookingId === undefined) throw new Error("bookingId required");
       const calls: Call[] = [
-        call(env.proofStakeAddr, psIface.encodeFunctionData("withdraw", [Number(agentId)]),
-          `withdraw agent #${agentId}'s bond (principal + accrued Moonwell yield)`),
+        call(env.skinBookAddr, sbIface.encodeFunctionData("claimNoShow", [Number(bookingId)]),
+          `file a no-show for booking #${bookingId} (opens the dispute window)`),
       ];
-      res.json(prepared(`Withdraw agent #${agentId}'s Moonwell-backed bond.`, calls));
+      res.json(prepared(`File a no-show for booking #${bookingId}.`, calls));
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Customer contests a no-show within the window: dispute(bookingId).
+  app.post("/prepare/dispute", async (req, res) => {
+    try {
+      const { bookingId } = req.body ?? {};
+      if (bookingId === undefined) throw new Error("bookingId required");
+      const calls: Call[] = [
+        call(env.skinBookAddr, sbIface.encodeFunctionData("dispute", [Number(bookingId)]),
+          `dispute the no-show on booking #${bookingId}`),
+      ];
+      res.json(prepared(`Dispute the no-show claim on booking #${bookingId}.`, calls));
     } catch (e: any) {
       res.status(400).json({ error: e.message });
     }
@@ -241,7 +271,7 @@ async function main() {
 
   app.listen(PORT, () =>
     console.log(
-      `[prepare] ProofStake prepare/calldata service on http://127.0.0.1:${PORT}  (no keys; build->send_calls)`
+      `[prepare] SkinBook prepare/calldata service on http://127.0.0.1:${PORT}  (no keys; build->send_calls)`
     )
   );
 }
