@@ -1,0 +1,30 @@
+# dependencies
+node_modules
+**/node_modules
+
+# secrets / env — never commit these
+.env
+.env.*
+**/.env
+**/.env.*
+*.local
+**/*.local
+!.env.example
+!**/.env.example
+
+# hardhat build output
+cache
+artifacts
+typechain-types
+ignition/deployments
+coverage
+coverage.json
+
+# next.js
+dashboard/.next
+**/.next
+dashboard/out
+
+# misc
+*.log
+.DS_Store

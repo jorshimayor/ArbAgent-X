@@ -1,0 +1,20 @@
+{
+  "name": "proofstake",
+  "version": "0.1.0",
+  "description": "x402 with skin in the game. Slashable agent reputation backed by yield-bearing USDC bonds on Base.",
+  "license": "MIT",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "node": "hardhat node",
+    "deploy:sepolia": "hardhat ignition deploy ./ignition/modules/ProofStake.ts --network baseSepolia",
+    "seed:sepolia": "hardhat run scripts/seed-agents.ts --network baseSepolia"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.1.0",
+    "dotenv": "^16.4.5",
+    "hardhat": "^2.22.17",
+    "typescript": "^5.6.3"
+  }
+}
