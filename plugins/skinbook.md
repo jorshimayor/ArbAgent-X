@@ -14,7 +14,7 @@ metadata:
   protocol: SkinBook
   network: base-sepolia
   chainId: 84532
-  contract: "0x0000000000000000000000000000000000000000"
+  contract: "0x60420945473eaa950CAd60902457F4481FB9dd25"
   yield_source: Moonwell (ERC4626)
 ---
 

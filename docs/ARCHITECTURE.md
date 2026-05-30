@@ -6,8 +6,9 @@
 > is the profitable strategy — on both sides of the counter.
 
 - **Network:** Base Sepolia (`chainId 84532`) for the demo; one address swap to Base mainnet.
+- **Live contract (Base Sepolia):** `0x60420945473eaa950CAd60902457F4481FB9dd25`
 - **USDC (Circle, Base Sepolia):** `0x036CbD53842c5426634e7929541eC2318f3dCF7e`
-- **Deposit vault (ERC-4626):** a Moonwell USDC vault on mainnet; a Moonwell-shaped mock on Base Sepolia.
+- **Deposit vault (ERC-4626):** `0x7f457EA8dC5d775543Be40f68Ff01992c5dC5f85` — a Moonwell-shaped mock on Base Sepolia; a real Moonwell USDC vault on mainnet (one address swap).
 
 ---
 

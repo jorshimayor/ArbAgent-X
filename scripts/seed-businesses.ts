@@ -54,8 +54,13 @@ async function main() {
 
   const ids: bigint[] = [];
   for (const b of businesses) {
-    await (await sb.registerBusiness(b.name, b.deposit, b.cancelWindow, b.grace)).wait();
-    const id = await sb.businessCount();
+    const rc = await (await sb.registerBusiness(b.name, b.deposit, b.cancelWindow, b.grace)).wait();
+    // Read the id from the event, not a follow-up businessCount() call: public RPCs
+    // can serve a stale read right after the tx and hand back the wrong id.
+    const ev = rc!.logs
+      .map((l) => { try { return sb.interface.parseLog(l); } catch { return null; } })
+      .find((p) => p?.name === "BusinessRegistered");
+    const id = ev!.args.businessId as bigint;
     ids.push(id);
     console.log(`Registered business #${id} -> ${b.name} (deposit ${fromUsdc(b.deposit)} USDC)`);
   }
@@ -67,8 +72,11 @@ async function main() {
     const deposit = businesses[i].deposit;
     await (await usdc.approve(addr, deposit)).wait();
     const slot = now + (i + 3) * DAY; // a few days out
-    await (await sb.book(id, slot)).wait();
-    const bookingId = await sb.bookingCount();
+    const rc = await (await sb.book(id, slot)).wait();
+    const ev = rc!.logs
+      .map((l) => { try { return sb.interface.parseLog(l); } catch { return null; } })
+      .find((p) => p?.name === "Booked");
+    const bookingId = ev!.args.bookingId as bigint;
     console.log(`Booked #${bookingId} at business #${id} for slot ${new Date(slot * 1000).toISOString()}`);
   }
 
