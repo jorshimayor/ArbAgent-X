@@ -2,6 +2,8 @@
 node_modules
 **/node_modules
 
+/docs
+
 # secrets / env — never commit these
 .env
 .env.*
